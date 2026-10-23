@@ -271,12 +271,12 @@ async function handleAction(el,e){
   }
   if(action==='delete-photo'){
     if(!confirm('Remove this photo from Dope Stuff? This does not affect external marketplaces.'))return;
-    await api(`/api/items/${id}/photos/${Number(el.dataset.photo)}`,{method:'DELETE'});
+    const result=await api(`/api/items/${id}/photos/${Number(el.dataset.photo)}`,{method:'DELETE'});
     await reloadData();
     const updated=S.catalog.find(x=>x.id===id);
     if($('#editor-gallery'))$('#editor-gallery').innerHTML=galleryHtml(updated);
     const hint=$('.modal .form-block .hint');if(hint)hint.textContent=`Saved photos: ${updated?.photo_count||0} of 8. You can add more before saving changes.`;
-    toast('Photo removed from Dope Stuff.');return;
+    toast(result.photo_cleanup_pending?'Photo removed from your inventory. Private storage cleanup is queued for retry.':'Photo removed from Dope Stuff.');return;
   }
   if(action==='confirm-import'){
     if(!S.pendingImport){toast('Preview your CSV again first.',true);return;}

@@ -178,6 +178,25 @@ CREATE TABLE IF NOT EXISTS pilot_requests (
 """
 
 
+# Cleanup records deliberately outlive accounts and contain no account identifiers.
+# The same additive table definition works in SQLite and PostgreSQL.
+PHOTO_CLEANUP_SCHEMA = """
+CREATE TABLE IF NOT EXISTS photo_deletions (
+ target_key TEXT NOT NULL,
+ file_path TEXT NOT NULL,
+ created_at BIGINT NOT NULL,
+ last_attempt_at BIGINT NOT NULL DEFAULT 0,
+ attempts INTEGER NOT NULL DEFAULT 0,
+ last_error TEXT NOT NULL DEFAULT '',
+ PRIMARY KEY (target_key, file_path)
+);
+CREATE INDEX IF NOT EXISTS idx_photo_deletions_retry
+ ON photo_deletions(target_key, last_attempt_at, created_at);
+"""
+SCHEMA += PHOTO_CLEANUP_SCHEMA
+PG_SCHEMA += PHOTO_CLEANUP_SCHEMA
+
+
 def postgres_sql(sql: str) -> str:
     """Normalize the narrow SQLite SQL subset used by FORM's existing API.
 

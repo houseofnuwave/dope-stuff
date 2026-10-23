@@ -7,6 +7,7 @@ Never run against real seller records or cloud production/staging databases.
 from __future__ import annotations
 import io
 import os
+from unittest.mock import patch
 from urllib.parse import urlparse
 
 
@@ -21,7 +22,7 @@ def main():
 
     from fastapi.testclient import TestClient
     from PIL import Image
-    from app import photo_storage
+    from app import db, photo_storage, photo_cleanup
     from app.main import app
 
     bucket=os.environ['FORM_S3_BUCKET']
@@ -57,10 +58,27 @@ def main():
         assert backup.status_code==200 and len(backup.content)>100
         listed=client.get('/api/items').json()
         assert listed['total']==1
-        deleted=client.post('/api/account/delete',headers=token,json={
-            'password':auth['password'],'confirmation':'DELETE MY ACCOUNT'})
-        assert deleted.status_code==200,deleted.text
-    print('CLOUD SMOKE PASSED: Postgres, private S3 photo, inventory, account export, delete.')
+        # Exercise the real PostgreSQL transaction with private S3 unavailable
+        # during deletion, then recover against the same real object store.
+        with patch.object(photo_storage, 'delete_photo', side_effect=OSError('test outage')):
+            deleted=client.post('/api/account/delete',headers=token,json={
+                'password':auth['password'],'confirmation':'DELETE MY ACCOUNT'})
+        assert deleted.status_code==202,deleted.text
+        assert deleted.json()['photo_cleanup_pending']==1
+        assert client.get('/api/session').json()['authenticated'] is False
+        with db.connect() as connection:
+            tasks = connection.execute('SELECT file_path FROM photo_deletions').fetchall()
+        names = [row['file_path'] for row in tasks]
+        assert len(names)==1
+        assert photo_storage.read_photo(names[0])[:4]==b'RIFF'
+        assert photo_cleanup.process_pending(names=names)=={'completed':1,'pending':0}
+        try:
+            photo_storage.read_photo(names[0])
+        except FileNotFoundError:
+            pass
+        else:
+            raise AssertionError('Deleted account photo remains in object storage')
+    print('CLOUD SMOKE PASSED: Postgres, private S3, inventory, export, deletion outage and durable retry.')
 
 
 if __name__=='__main__': main()

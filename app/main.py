@@ -7,6 +7,7 @@ Design constraints:
 """
 from __future__ import annotations
 import csv
+import asyncio
 import hashlib
 import logging
 import smtplib
@@ -21,7 +22,7 @@ import re
 import secrets
 import sqlite3
 import time
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 from urllib.parse import urlparse
 from starlette.middleware.trustedhost import TrustedHostMiddleware
@@ -38,7 +39,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from .db import init_db, connect, rowdict, DATA_DIR, postgres_enabled
 from .backup import inspect_archive, MAX_ZIP_BYTES
-from . import photo_storage
+from . import photo_storage, photo_cleanup
 
 # EmailStr depends on email-validator. Avoid adding an undeclared package by using a small validator instead.
 EMAIL = re.compile(r"^[^\s@]{1,64}@[^\s@]{1,190}\.[^\s@]{2,}$")
@@ -61,7 +62,13 @@ logger = logging.getLogger("form.recovery")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
-    yield
+    cleanup_worker = asyncio.create_task(photo_cleanup.retry_loop())
+    try:
+        yield
+    finally:
+        cleanup_worker.cancel()
+        with suppress(asyncio.CancelledError):
+            await cleanup_worker
 
 # Fail closed in hosted staging and production. The local founder beta remains
 # usable over 127.0.0.1 without requiring a domain or HTTPS.
@@ -642,7 +649,7 @@ async def restore_account(request: Request, file: UploadFile = File(...),
 
 
 @app.post("/api/account/delete")
-def delete_account(p: DeleteAccountInput, request: Request, user=Depends(csrf)):
+def delete_account(p: DeleteAccountInput, request: Request, response: Response, user=Depends(csrf)):
     """Reauthenticate; delete owner data and local photos; invalidate session."""
     limiter(request, "delete-account", 8)
     with connect() as db:
@@ -657,6 +664,7 @@ def delete_account(p: DeleteAccountInput, request: Request, user=Depends(csrf)):
         # Legacy cover files may not have gallery references in older databases.
         paths.extend(r['photo_path'] for r in db.execute("SELECT photo_path FROM items WHERE user_id=? AND photo_path IS NOT NULL", (user['id'],)))
         db.execute("BEGIN IMMEDIATE")
+        photo_cleanup.enqueue(db, [Path(name).name for name in paths])
         # Explicitly remove restricted child records before cascading inventory.
         db.execute("DELETE FROM sales WHERE user_id=?", (user['id'],))
         db.execute("DELETE FROM feedback WHERE user_id=?", (user['id'],))
@@ -664,9 +672,13 @@ def delete_account(p: DeleteAccountInput, request: Request, user=Depends(csrf)):
         db.execute("DELETE FROM pilot_requests WHERE email=?", (user['email'],))
         db.execute("COMMIT")
     request.session.clear()
-    for name in set(paths):
-        photo_storage.delete_photo(Path(name).name)
-    return {"ok": True, "notice": "Your local Dope Stuff account and its inventory data were deleted. External marketplace listings are unaffected."}
+    cleanup = photo_cleanup.process_pending(names=[Path(name).name for name in paths])
+    if cleanup['pending']:
+        response.status_code = 202
+    return {"ok": True, "photo_cleanup_pending": cleanup['pending'],
+        "notice": ("Your account and inventory records were deleted. Private photo cleanup is queued for retry."
+                   if cleanup['pending'] else "Your account, inventory records and active photo objects were deleted.")
+                  + " External marketplace listings are unaffected."}
 
 @app.get("/api/channels")
 def channels(user=Depends(current_user)):
@@ -892,7 +904,7 @@ def get_gallery_photo(item_id:int,photo_id:int,user=Depends(current_user)):
 
 
 @app.delete("/api/items/{item_id}/photos/{photo_id}")
-def delete_gallery_photo(item_id:int,photo_id:int,user=Depends(csrf)):
+def delete_gallery_photo(item_id:int,photo_id:int,response:Response,user=Depends(csrf)):
     with connect() as db:
         db.execute("BEGIN IMMEDIATE")
         item=user_item(db,user['id'],item_id)
@@ -900,13 +912,16 @@ def delete_gallery_photo(item_id:int,photo_id:int,user=Depends(csrf)):
             raise HTTPException(409,"Cannot change photos on sold or archived items")
         photo=db.execute("SELECT file_path FROM item_photos WHERE id=? AND item_id=?",(photo_id,item_id)).fetchone()
         if not photo: raise HTTPException(404,"Photo not found")
+        photo_cleanup.enqueue(db, [photo['file_path']])
         db.execute("DELETE FROM item_photos WHERE id=?",(photo_id,))
         cover=db.execute("SELECT file_path FROM item_photos WHERE item_id=? ORDER BY position,id LIMIT 1",(item_id,)).fetchone()
         db.execute("UPDATE items SET photo_path=?,updated_at=datetime('now') WHERE id=?",(cover['file_path'] if cover else None,item_id))
         db.execute("COMMIT")
         updated=serialize_item(db,user_item(db,user['id'],item_id))
-    photo_storage.delete_photo(photo['file_path'])
-    return {"ok":True,"item":updated}
+    cleanup = photo_cleanup.process_pending(names=[photo['file_path']])
+    if cleanup['pending']:
+        response.status_code = 202
+    return {"ok":True,"item":updated,"photo_cleanup_pending":cleanup['pending']}
 
 
 
