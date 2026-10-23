@@ -97,6 +97,9 @@ def run():
 
                 print('CHECK',device,'signed up',flush=True)
                 signup()
+                page.locator('.aging-card').wait_for(timeout=8000)
+                assert page.locator('.aging-bin').count()==4
+                assert 'time since' not in page.locator('.aging-card').inner_text().lower()
                 page.locator('[data-action="new"]').first.click()
                 page.locator('#field-title').fill('Vintage leather moto jacket')
                 page.locator('#field-brand').fill('Test Studio')
@@ -116,6 +119,7 @@ def run():
                 page.locator('#item-form button[type="submit"]').click()
                 page.locator('.mobile-item .table-title' if device=='mobile' else '.desktop-item-table .table-title').first.wait_for(timeout=12000)
                 assert api.get('/api/items').json()['items'][0]['photo_count']==3
+                assert api.get('/api/inventory-aging').json()['available_count']==1
                 assert api.get('/api/items').json()['items'][0]['readiness']['complete']==7
                 print('CHECK',device,'first screen',flush=True)
                 page.locator('#toast-root').evaluate('(el)=>el.innerHTML=""')
