@@ -61,3 +61,21 @@
 
 /* v1.0: six genuine mobile routes, no hidden Sales or Action Center. */
 @media(max-width:850px){.mobile-nav{gap:1px}.mobile-nav button{flex:1;min-width:0;padding:4px 2px;overflow:hidden;font-size:9px;white-space:nowrap}}
+
+/* Seller-supplied Listing Studio — constrained, accessible and mobile-first */
+.listing-studio{margin:4px 0 8px;padding:17px;background:var(--surface2);border:1px solid var(--line);border-radius:14px}
+.listing-studio summary{cursor:pointer;font-size:15px;font-weight:700;line-height:1.5}
+.listing-studio summary:focus-visible{outline:3px solid var(--accent);outline-offset:3px}
+.listing-studio-tag{display:inline-block;margin-left:9px;padding:3px 8px;border-radius:99px;background:#e4eddc;color:#304530;font-size:11px;font-weight:600}
+.listing-studio-basics{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:14px 0}
+.listing-studio-basics label,.listing-studio-measurements label{display:flex;flex-direction:column;gap:6px;font-weight:600;font-size:13px;min-width:0}
+.listing-studio-basics input,.listing-studio-basics select,.listing-studio-basics textarea,.listing-studio-measurements input{width:100%;min-width:0}
+.listing-studio-full{grid-column:1/-1}
+.listing-studio-measurements{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:11px;margin-top:12px}
+.listing-studio-measurements [hidden]{display:none!important}
+.listing-studio-preview-wrap{border:1px solid var(--line);border-radius:10px;padding:15px;background:var(--surface)}
+.listing-studio-preview{font-family:inherit;font-size:13px;line-height:1.55;white-space:pre-wrap;overflow-wrap:anywhere;margin:10px 0 0}
+.listing-studio-preview.studio-error{color:#a33432;font-weight:600}
+.listing-studio-actions{margin-top:12px;align-items:center}
+.listing-studio-actions p{margin:0;flex:1}
+@media(max-width:620px){.listing-studio{padding:12px}.listing-studio-basics{grid-template-columns:1fr}.listing-studio-measurements{grid-template-columns:repeat(2,minmax(0,1fr))}}
