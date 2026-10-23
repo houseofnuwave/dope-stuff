@@ -375,14 +375,9 @@ def readyz():
     """Staging readiness: database schema is queryable and photo backend is reachable."""
     try:
         with connect() as db:
-            if postgres_enabled():
-                exists = db.execute("SELECT to_regclass('public.users')").fetchone()
-                if not exists or not exists['to_regclass']:
-                    raise RuntimeError('Database schema missing')
-            else:
-                if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='users'").fetchone():
-                    raise RuntimeError('Database schema missing')
             db.execute('SELECT 1')
+            from . import schema_migrations
+            schema_migrations.check_current(db, 'postgres' if postgres_enabled() else 'sqlite')
         photo_storage.storage_ready()
         return {'status':'ready'}
     except Exception as exc:

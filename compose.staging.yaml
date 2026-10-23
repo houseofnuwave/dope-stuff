@@ -1,5 +1,7 @@
 # SINGLE-INSTANCE PRIVATE STAGING, NOT A PUBLIC PRODUCTION DEPLOYMENT.
 # Requires DNS for FORM_STAGE_DOMAIN and access to TCP ports 80/443.
+# Hosted startup requires the explicit maintenance-window upgrade in MIGRATIONS.md.
+# Run the migration CLI from this image/environment before starting the worker set.
 services:
   form:
     build: .

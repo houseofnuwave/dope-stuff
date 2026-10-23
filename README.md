@@ -32,6 +32,10 @@ current evidence and unfinished release gates. This is not a v1.0 release claim.
 Authenticated writes also recheck session revocation under the owner lock;
 password/reset/deletion operations share a documented lock order. See
 [AUTH_CONCURRENCY.md](AUTH_CONCURRENCY.md) for the guarantees and remaining auth gates.
+Schema upgrades now use immutable, checksummed revisions and an atomic pending
+batch. Local/test startup upgrades automatically; hosted startup requires an
+explicit maintenance-window `python -m tools.migrate --apply` first. Follow
+[MIGRATIONS.md](MIGRATIONS.md) for backups, inspection and recovery boundaries.
 
 The verification statements below are historical archive claims, not the results of this public import. See `PUBLIC_IMPORT.md` for current validation.
 

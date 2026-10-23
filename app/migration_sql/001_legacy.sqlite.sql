@@ -1,0 +1,82 @@
+CREATE TABLE IF NOT EXISTS users (
+ id INTEGER PRIMARY KEY AUTOINCREMENT,
+ name TEXT NOT NULL,
+ email TEXT NOT NULL UNIQUE,
+ password_hash TEXT NOT NULL,
+ session_version INTEGER NOT NULL DEFAULT 0,
+ created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS items (
+ id INTEGER PRIMARY KEY AUTOINCREMENT,
+ user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+ sku TEXT NOT NULL,
+ title TEXT NOT NULL,
+ brand TEXT NOT NULL DEFAULT '',
+ category TEXT NOT NULL DEFAULT '',
+ size TEXT NOT NULL DEFAULT '',
+ color TEXT NOT NULL DEFAULT '',
+ condition TEXT NOT NULL DEFAULT 'Unspecified',
+ description TEXT NOT NULL DEFAULT '',
+ notes TEXT NOT NULL DEFAULT '',
+ price_cents INTEGER NOT NULL DEFAULT 0 CHECK(price_cents >= 0),
+ cost_cents INTEGER NOT NULL DEFAULT 0 CHECK(cost_cents >= 0),
+ shipping_cents INTEGER NOT NULL DEFAULT 0 CHECK(shipping_cents >= 0),
+ quantity INTEGER NOT NULL DEFAULT 1 CHECK(quantity BETWEEN 0 AND 999),
+ status TEXT NOT NULL DEFAULT 'draft' CHECK(status IN ('draft','active','sold','archived')),
+ photo_path TEXT,
+ created_at TEXT NOT NULL DEFAULT (datetime('now')),
+ updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+ UNIQUE(user_id, sku)
+);
+CREATE INDEX IF NOT EXISTS idx_items_user ON items(user_id, status, updated_at);
+CREATE TABLE IF NOT EXISTS item_channels (
+ id INTEGER PRIMARY KEY AUTOINCREMENT,
+ item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+ channel TEXT NOT NULL,
+ status TEXT NOT NULL DEFAULT 'not_started' CHECK(status IN ('not_started','ready','manually_published','delist_required','delisted')),
+ listing_url TEXT NOT NULL DEFAULT '',
+ updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+ UNIQUE(item_id, channel)
+);
+CREATE TABLE IF NOT EXISTS item_photos (
+ id INTEGER PRIMARY KEY AUTOINCREMENT,
+ item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+ file_path TEXT NOT NULL,
+ position INTEGER NOT NULL DEFAULT 0,
+ created_at TEXT NOT NULL DEFAULT (datetime('now')),
+ UNIQUE(item_id,file_path)
+);
+CREATE INDEX IF NOT EXISTS idx_item_photos_order ON item_photos(item_id,position,id);
+CREATE TABLE IF NOT EXISTS sales (
+ id INTEGER PRIMARY KEY AUTOINCREMENT,
+ item_id INTEGER NOT NULL UNIQUE REFERENCES items(id),
+ user_id INTEGER NOT NULL REFERENCES users(id),
+ channel TEXT NOT NULL,
+ sold_cents INTEGER NOT NULL CHECK(sold_cents >= 0),
+ fee_cents INTEGER NOT NULL DEFAULT 0 CHECK(fee_cents >= 0),
+ ship_cents INTEGER NOT NULL DEFAULT 0 CHECK(ship_cents >= 0),
+ cost_cents INTEGER NOT NULL DEFAULT 0 CHECK(cost_cents >= 0),
+ created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS feedback (
+ id INTEGER PRIMARY KEY AUTOINCREMENT,
+ user_id INTEGER NOT NULL REFERENCES users(id),
+ rating INTEGER NOT NULL CHECK(rating BETWEEN 1 AND 5),
+ message TEXT NOT NULL,
+ created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS password_resets (
+ id INTEGER PRIMARY KEY AUTOINCREMENT,
+ user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+ token_hash TEXT NOT NULL UNIQUE,
+ expires_at INTEGER NOT NULL,
+ consumed_at INTEGER,
+ created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_password_resets_user ON password_resets(user_id);
+CREATE TABLE IF NOT EXISTS pilot_requests (
+ id INTEGER PRIMARY KEY AUTOINCREMENT,
+ email TEXT NOT NULL UNIQUE,
+ source TEXT NOT NULL DEFAULT 'pricing',
+ created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);

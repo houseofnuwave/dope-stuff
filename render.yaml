@@ -1,6 +1,9 @@
 # FORM private beta infrastructure. Requires a custom staging hostname,
 # separate PRIVATE Cloudflare R2 bucket, and securely supplied environment vars.
 # DO NOT merge staging and production data. No payments or marketplace automation.
+# Hosted startup is check-only: perform the explicit maintenance-window database
+# upgrade from this same release image before starting workers. See MIGRATIONS.md.
+# No provider-specific pre-deploy automation or paid resources are authorized here.
 databases:
   - name: form-seller-staging-postgres
     region: virginia

@@ -25,6 +25,9 @@ def main():
     from app import db, photo_storage, photo_cleanup
     from app.main import app
 
+    from tools.migration_checks import run_postgres_checks
+    run_postgres_checks()
+
     bucket=os.environ['FORM_S3_BUCKET']
     s3=photo_storage.s3_client()
     try:

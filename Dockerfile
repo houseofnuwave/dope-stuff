@@ -6,7 +6,7 @@ RUN groupadd -r form && useradd --no-log-init -r -g form form && mkdir /data && 
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 COPY app ./app
-COPY tools/ops_backup.py ./tools/ops_backup.py
+COPY tools ./tools
 USER form
 ENV FORM_DATA_DIR=/data FORM_ENV=development FORM_COOKIE_SECURE=false
 EXPOSE 8000

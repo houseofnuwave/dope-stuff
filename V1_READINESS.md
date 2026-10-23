@@ -161,6 +161,43 @@ checks. Python compilation, JavaScript syntax and clean desktop/mobile Chromium
 seller, pagination and backup journeys also passed. Synthetic email capture is
 not real SMTP delivery or mailbox-ownership verification.
 
+## Seventh implementation pass: immutable atomic schema upgrades
+
+The preceding probe reproduced partial schema persistence after a startup SQL
+failure. Startup now uses three immutable SQL revisions and a checksummed ledger;
+the complete pending batch, ledger entries and compatibility backfill commit or
+roll back together. SQLite writer locking and a bounded PostgreSQL advisory-lock
+transaction serialize upgraders. Changed/gapped/newer history and unsupported
+core columns/keys/ownership relations fail closed. Migration application rejects
+orphan SQLite rows and unvalidated PostgreSQL constraints instead of silently
+deleting data or stamping a version. This is not exhaustive CHECK/default/trigger
+or performance-index drift auditing.
+
+Local/test startup retains automatic initialization. Staging/production startup
+is now check-only and requires an explicit `python -m tools.migrate --apply`
+maintenance step first; readiness verifies current schema history. The inspection
+CLI is read-only and does not create a missing SQLite database. Docker includes
+the operator tools and migration SQL. Staging templates/documents explicitly
+require the maintenance sequence rather than implying automatic hosted setup.
+
+Local validation: **159 backend tests passed**, including 22 new migration tests,
+plus Python compilation, JavaScript syntax and clean desktop/mobile browser
+journeys. Original v0.7 SQLite/PostgreSQL schema constants were recovered as inert
+SQL fixtures, without executing archive code. Tests preserve all legacy records,
+timestamps and existing cleanup work, restore cover associations, roll back
+failed DDL, serialize two upgraders, survive a real child-process crash, reject
+drift/unknown history and verify hosted check-only startup. An encrypted local
+pre-upgrade recovery point restores into an isolated folder with complete record
+and WebP-hash comparison after a simulated post-upgrade change. PostgreSQL CI adds
+the shared original-schema, DDL-failure and competing-upgrade probes; verify the
+actual candidate run before claiming it passed.
+
+See `MIGRATIONS.md` for the operator protocol. No destructive down migration is
+provided: old binaries must not erase/ignore privacy cleanup state. This local
+data restoration rehearsal is not an old-release binary rollback, managed-provider
+recovery or hosted cutover drill. Those and dependency locking remain release
+gates. No real seller database or paid hosting environment was migrated.
+
 ## Remaining release gates
 
 - [ ] Observe real seller workflow and establish measurable value.
@@ -170,7 +207,8 @@ not real SMTP delivery or mailbox-ownership verification.
 - [x] Align portable export/restore validation, advertised budgets and larger lifetime-history recovery.
 - [x] Recover newly tracked failed-upload/restore writes and reconcile process interruptions.
 - [ ] Establish cleanup-watch monitoring/retention, provider quiescence/pruning and historical orphan inventory policy.
-- [ ] Versioned migrations, reproducible dependency lock, upgrade and rollback drills.
+- [x] Versioned atomic schema migrations, original-schema upgrade/failure/concurrency probes and isolated local data restoration rehearsal.
+- [ ] Reproducible dependency lock, full schema-drift review and actual release-image/hosted upgrade, rollback/cutover and provider recovery drills.
 - [ ] Configure and verify real hosted HTTPS, PostgreSQL and private object storage.
 - [ ] Verify database-plus-photo disaster recovery and recovery objectives.
 - [ ] One-use invitations, mailbox verification, real email recovery and shared throttling.

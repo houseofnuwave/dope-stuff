@@ -1,5 +1,15 @@
 # Dope Stuff v0.7 — private hosted beta deployment
 
+## Current upgrade prerequisite
+
+Hosted startup is now schema-check-only. Before starting/replacing the worker
+set, follow [MIGRATIONS.md](MIGRATIONS.md): stop writes, verify a matching
+database/photo recovery point, explicitly run `python -m tools.migrate --apply`
+from the candidate image with the same target environment, verify the read-only
+check and then reopen only after readiness/workflow checks. The historical
+deployment steps below do not configure this maintenance workflow automatically.
+No zero-downtime rollout, provider recovery drill or paid deployment is claimed.
+
 **Deployment status:** The repository is ready for owner-account configuration, but **no live deployment has been performed**. Do not put real seller data in a new deployment until all cloud integration, backup, access control, and account deletion checks have passed.
 
 ## Architecture
