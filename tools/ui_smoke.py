@@ -62,10 +62,11 @@ def run():
                             'type':content_type}
 
                 page.expose_function('formBridge',bridge)
-                html=(root/'app/static/index.html').read_text().replace(
-                    '<link rel="stylesheet" href="/static/styles.css">','').replace('<script src="/static/listing_studio.js" defer></script>','')
-                    .replace('<script src="/static/listing_studio_ui.js" defer></script>','')
+                html=((root/'app/static/index.html').read_text()
+                    .replace('<link rel="stylesheet" href="/static/styles.css">','')
+                    .replace('<script src="/static/listing_studio.js" defer></script>','')
                     .replace('<script src="/static/app.js" defer></script>','')
+                    .replace('<script src="/static/listing_studio_ui.js" defer></script>',''))
                 page.set_content(html)
                 page.add_style_tag(content=(root/'app/static/styles.css').read_text())
                 page.evaluate('''(()=>{window.fetch=async function(url,options={}) {
