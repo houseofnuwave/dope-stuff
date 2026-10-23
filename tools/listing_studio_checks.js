@@ -51,6 +51,7 @@ mustFail(()=>studio.compose(base,facts({wear:'In good shape\nAuthenticity guaran
 mustFail(()=>studio.compose(base,facts({material:studio.OPEN})),'single line');
 mustFail(()=>studio.compose('a'.repeat(2980),facts()),'3,000 character');
 mustFail(()=>studio.compose(base+'\n'+studio.OPEN+'\nOops',facts()),'manually changed');
+mustFail(()=>studio.read(output.replace(studio.CLOSE, 'Seller-added unreconciled detail\\n'+studio.CLOSE)), 'manual edits');
 mustFail(()=>studio.compose(base, facts({group:'injected'})),'garment category');
 
 // The browser uses this module, while persistence continues through the normal
