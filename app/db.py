@@ -12,8 +12,8 @@ DB_PATH = DATA_DIR / "form.db"
 # through immutable migration SQL and its checksummed ledger.
 _SQL = Path(__file__).with_name('migration_sql')
 PHOTO_CLEANUP_SCHEMA = (_SQL / '002_photo_deletions.sql').read_text() + '\n' + (_SQL / '003_photo_writes.sql').read_text()
-SCHEMA = 'PRAGMA foreign_keys = ON;\n' + (_SQL / '001_legacy.sqlite.sql').read_text() + '\n' + PHOTO_CLEANUP_SCHEMA
-PG_SCHEMA = (_SQL / '001_legacy.postgres.sql').read_text() + '\n' + PHOTO_CLEANUP_SCHEMA
+SCHEMA = 'PRAGMA foreign_keys = ON;\n' + (_SQL / '001_legacy_sqlite.sql').read_text() + '\n' + PHOTO_CLEANUP_SCHEMA
+PG_SCHEMA = (_SQL / '001_legacy_postgres.sql').read_text() + '\n' + PHOTO_CLEANUP_SCHEMA
 
 
 def postgres_enabled() -> bool:

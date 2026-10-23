@@ -57,7 +57,7 @@ class Revision:
 
 
 REVISIONS = (
-    Revision(1, 'legacy_v07', '001_legacy.sqlite.sql', '001_legacy.postgres.sql'),
+    Revision(1, 'legacy_v07', '001_legacy_sqlite.sql', '001_legacy_postgres.sql'),
     Revision(2, 'durable_photo_deletions', '002_photo_deletions.sql', '002_photo_deletions.sql'),
     Revision(3, 'durable_photo_writes', '003_photo_writes.sql', '003_photo_writes.sql'),
 )

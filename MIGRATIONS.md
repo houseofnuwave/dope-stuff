@@ -99,7 +99,7 @@ historical object versions and cleanup-watch retention need separate handling.
 
 ## Verification and remaining gates
 
-Fixtures in `tests/fixtures/v07.*.sql` were extracted using `ast.literal_eval`
+Fixtures in `tests/fixtures/v07_*.sql` were extracted using `ast.literal_eval`
 from the original archive's `SCHEMA` and `PG_SCHEMA` constants, trimming only
 surrounding whitespace. No archive code was executed to create them. Source ZIP:
 `DopeStuff_v0.7_Source (9).zip`, SHA-256
@@ -114,6 +114,13 @@ inspection. An encrypted local pre-upgrade snapshot is restored into a separate
 folder and compared for complete records and real WebP hashes after a simulated
 post-upgrade data change. This is a **data restoration rehearsal**, not a claim
 that an old app binary or a hosted deployment was rolled back.
+
+Revision/fixture SQL uses `_sqlite.sql` names, not `.sqlite.sql`, so sensitive
+database ignore rules do not remove runtime source from the Docker context.
+CI builds the actual image, starts a disposable container without external
+networking or host volumes, and checks real HTTP/cookies/CSRF, photo upload,
+export, account deletion and the packaged migration CLI. That is an additional
+candidate check, not a local Docker-build claim or deployed HTTPS evidence.
 
 Disposable PostgreSQL CI repeats original-schema adoption, failed-DDL rollback,
 concurrent upgrade, record preservation and catalog checks in a uniquely generated

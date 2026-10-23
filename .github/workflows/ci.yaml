@@ -28,6 +28,25 @@ jobs:
         run: python -m playwright install --with-deps chromium
       - name: Desktop and mobile seller journeys
         run: python tools/ui_smoke.py
+  container-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the actual application image
+        run: docker build --tag dope-stuff-container-ci .
+      - name: Start disposable container without external networking or host volumes
+        run: >-
+          docker run --detach --name dope-stuff-container-ci --network none
+          --env FORM_CONTAINER_SMOKE_ALLOW_SYNTHETIC=YES_DISPOSABLE_CONTAINER
+          dope-stuff-container-ci
+      - name: Real HTTP workflow and packaged migration CLI
+        run: |
+          docker exec dope-stuff-container-ci python -m tools.container_smoke
+          docker exec dope-stuff-container-ci python -m tools.migrate
+      - name: Remove only the disposable CI container
+        if: always()
+        run: docker rm --force dope-stuff-container-ci || true
   cloud-smoke:
     runs-on: ubuntu-latest
     timeout-minutes: 20

@@ -180,7 +180,7 @@ CLI is read-only and does not create a missing SQLite database. Docker includes
 the operator tools and migration SQL. Staging templates/documents explicitly
 require the maintenance sequence rather than implying automatic hosted setup.
 
-Local validation: **159 backend tests passed**, including 22 new migration tests,
+Local validation: **160 backend tests passed**, including 23 new migration tests,
 plus Python compilation, JavaScript syntax and clean desktop/mobile browser
 journeys. Original v0.7 SQLite/PostgreSQL schema constants were recovered as inert
 SQL fixtures, without executing archive code. Tests preserve all legacy records,
@@ -191,6 +191,14 @@ pre-upgrade recovery point restores into an isolated folder with complete record
 and WebP-hash comparison after a simulated post-upgrade change. PostgreSQL CI adds
 the shared original-schema, DDL-failure and competing-upgrade probes; verify the
 actual candidate run before claiming it passed.
+
+Publication review caught the private-data ignore rule matching `.sqlite.sql`
+source names. Revision/fixture files now use packaging-safe underscore names;
+their SQL bytes and ledger identities are unchanged. A regression check covers
+the exclusion pattern. CI now also builds the actual Docker image and runs an
+isolated real-HTTP cookie/CSRF, photo/export/deletion workflow and packaged
+migration CLI. Docker is unavailable locally; only the candidate's actual CI
+result can establish that container check, not the static filename test.
 
 See `MIGRATIONS.md` for the operator protocol. No destructive down migration is
 provided: old binaries must not erase/ignore privacy cleanup state. This local

@@ -59,7 +59,7 @@ def test_changed_revision_file_is_detected_without_restamping(database, monkeypa
     db.init_db()
     modified = tmp_path / 'modified-revisions'
     modified.mkdir()
-    for name in ('001_legacy.sqlite.sql', '001_legacy.postgres.sql', '002_photo_deletions.sql', '003_photo_writes.sql'):
+    for name in ('001_legacy_sqlite.sql', '001_legacy_postgres.sql', '002_photo_deletions.sql', '003_photo_writes.sql'):
         (modified / name).write_text((migrations.SQL_DIR / name).read_text() + '\n')
     monkeypatch.setattr(migrations, 'SQL_DIR', modified)
     with db.connect() as connection:
@@ -204,6 +204,19 @@ def test_sql_parser_keeps_quoted_semicolons_inside_one_statement():
     assert list(migrations.statements("INSERT INTO example VALUES ('a;b'); SELECT 1;")) == [
         "INSERT INTO example VALUES ('a;b');", 'SELECT 1;']
     with pytest.raises(migrations.MigrationError): list(migrations.statements('SELECT 1'))
+
+
+def test_runtime_sql_is_not_excluded_as_private_database_material():
+    import fnmatch
+    root = Path(__file__).resolve().parents[1]
+    # The runtime names must not match broad sensitive-data exclusions. They
+    # must also live inside the Dockerfile's copied app directory.
+    for revision in migrations.REVISIONS:
+        for name in (revision.sqlite_file, revision.postgres_file):
+            path = migrations.SQL_DIR / name
+            assert path.is_file() and path.relative_to(root).parts[0] == 'app'
+            for pattern in ('*.db', '*.db-*', '*.sqlite*'):
+                assert not fnmatch.fnmatch(path.name, pattern), 'Runtime SQL would be excluded from Docker context'
 
 
 def test_preupgrade_encrypted_restore_rehearsal_preserves_data_and_photos(database, monkeypatch):

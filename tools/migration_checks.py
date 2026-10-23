@@ -14,7 +14,7 @@ TABLES = ('users', 'items', 'item_channels', 'item_photos', 'sales', 'feedback',
 
 
 def legacy_sql(backend):
-    name = 'v07.postgres.sql' if backend == 'postgres' else 'v07.sqlite.sql'
+    name = 'v07_postgres.sql' if backend == 'postgres' else 'v07_sqlite.sql'
     return (Path(__file__).resolve().parents[1] / 'tests' / 'fixtures' / name).read_text()
 
 
