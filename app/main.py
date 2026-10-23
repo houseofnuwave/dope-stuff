@@ -38,7 +38,7 @@ from starlette.background import BackgroundTask
 
 from .db import init_db, connect, rowdict, DATA_DIR, postgres_enabled
 from .backup import inspect_archive
-from . import photo_storage, photo_cleanup, backup as portable_backup
+from . import photo_storage, photo_cleanup, photo_writes, backup as portable_backup
 
 # EmailStr depends on email-validator. Avoid adding an undeclared package by using a small validator instead.
 EMAIL = re.compile(r"^[^\s@]{1,64}@[^\s@]{1,190}\.[^\s@]{2,}$")
@@ -287,6 +287,14 @@ def csrf(request: Request, user=Depends(current_user)):
     if not expected or not hmac.compare_digest(expected, received):
         raise HTTPException(403,"Missing or invalid CSRF token")
     return user
+
+
+def begin_owner_write(db, uid):
+    """Serialize same-owner mutations with deletion and blank-account restore."""
+    db.execute('BEGIN IMMEDIATE')
+    suffix = ' FOR UPDATE' if postgres_enabled() else ''
+    if not db.execute('SELECT id FROM users WHERE id=?' + suffix, (uid,)).fetchone():
+        raise HTTPException(401, 'Account no longer available. Sign in again.')
 
 
 def user_item(db, uid:int, item_id:int, *, for_update=False):
@@ -623,19 +631,28 @@ async def restore_account(request: Request, file: UploadFile = File(...),
         if db.execute("SELECT COUNT(*) FROM items WHERE user_id=?", (user['id'],)).fetchone()[0]:
             raise HTTPException(409, "Restoring requires an account with no existing inventory")
     backup = await read_restore_file(file, user)
-    photo_names: dict[int, str] = {}
+    # Persist every generated name before any storage side effect. Never use
+    # archive paths as private object names.
+    photo_names = {old_id: secrets.token_hex(16) + '.webp' for old_id in backup.images}
+    operation = photo_writes.prepare(photo_names.values())
     try:
-        # Use fresh, unguessable internal names rather than trusting paths in ZIP metadata.
-        for old_id, encoded in backup.images.items():
-            name = secrets.token_hex(16) + '.webp'
-            photo_storage.save_photo(name, encoded)
-            photo_names[old_id] = name
         with connect() as db:
-            db.execute('BEGIN IMMEDIATE')
+            begin_owner_write(db, user['id'])
+            # Reauthenticate under the owner lock: deletion/password mutation
+            # may have occurred while a large archive was being validated.
+            stored = db.execute('SELECT password_hash FROM users WHERE id=?', (user['id'],)).fetchone()
+            try:
+                ph.verify(stored['password_hash'], password)
+            except (VerifyMismatchError, VerificationError):
+                raise HTTPException(401, 'Incorrect account password')
             if db.execute("SELECT COUNT(*) FROM items WHERE user_id=?", (user['id'],)).fetchone()[0]:
                 raise HTTPException(409, "Inventory changed during restore; no backup data was imported")
             if db.execute("SELECT COUNT(*) FROM feedback WHERE user_id=?", (user['id'],)).fetchone()[0]:
                 raise HTTPException(409, "Please use a new account without existing feedback for a full restore")
+            photo_writes.lock_operation(db, operation)
+            for old_id, encoded in backup.images.items():
+                photo_writes.write(operation, photo_names[old_id], encoded)
+                db.execute('SELECT 1')  # Detect a lost transaction before the next provider call.
             mapped = {}
             for entry in backup.items:
                 item_id = create_item(db, user['id'], entry['model'])
@@ -663,11 +680,10 @@ async def restore_account(request: Request, file: UploadFile = File(...),
                 db.execute("""INSERT INTO feedback(user_id,rating,message,created_at)
                     VALUES (?,?,?,COALESCE(?,datetime('now')))""",
                     (user['id'],entry['rating'],entry['message'],entry['created_at']))
+            photo_writes.finish(db, operation)
             db.execute('COMMIT')
     except Exception:
-        # Transaction closes without COMMIT, so SQLite rolls it back.
-        for name in photo_names.values():
-            photo_storage.delete_photo(name)
+        photo_writes.abort(operation)
         raise
     return {"ok":True,"restored":backup.metadata,
         "notice":"Dope Stuff records restored locally. External marketplace listings were NOT inspected, published, or changed. Verify all statuses manually."}
@@ -678,6 +694,7 @@ def delete_account(p: DeleteAccountInput, request: Request, response: Response, 
     """Reauthenticate; delete owner data and local photos; invalidate session."""
     limiter(request, "delete-account", 8)
     with connect() as db:
+        begin_owner_write(db, user['id'])
         stored = db.execute("SELECT password_hash FROM users WHERE id=?", (user['id'],)).fetchone()
         try:
             if not stored: raise VerifyMismatchError("unknown")
@@ -688,7 +705,6 @@ def delete_account(p: DeleteAccountInput, request: Request, response: Response, 
             JOIN items i ON i.id=p.item_id WHERE i.user_id=?""", (user['id'],))]
         # Legacy cover files may not have gallery references in older databases.
         paths.extend(r['photo_path'] for r in db.execute("SELECT photo_path FROM items WHERE user_id=? AND photo_path IS NOT NULL", (user['id'],)))
-        db.execute("BEGIN IMMEDIATE")
         photo_cleanup.enqueue(db, [Path(name).name for name in paths])
         # Explicitly remove restricted child records before cascading inventory.
         db.execute("DELETE FROM sales WHERE user_id=?", (user['id'],))
@@ -702,7 +718,8 @@ def delete_account(p: DeleteAccountInput, request: Request, response: Response, 
         response.status_code = 202
     return {"ok": True, "photo_cleanup_pending": cleanup['pending'],
         "notice": ("Your account and inventory records were deleted. Private photo cleanup is queued for retry."
-                   if cleanup['pending'] else "Your account, inventory records and active photo objects were deleted.")
+                   if cleanup['pending'] else "Your account and inventory records were deleted. Registered active photo objects were removed.")
+                  + " Interrupted uploads are reconciled separately; historical backups and object versions are not erased by this request."
                   + " External marketplace listings are unaffected."}
 
 @app.get("/api/channels")
@@ -804,15 +821,18 @@ def get_item(item_id:int,user=Depends(current_user)):
 @app.post("/api/items",status_code=201)
 def add_item(p:ItemInput,user=Depends(csrf)):
     with connect() as db:
+        begin_owner_write(db, user['id'])
         try: item_id=create_item(db,user['id'],p)
         except sqlite3.IntegrityError: raise HTTPException(409,"SKU already used in your inventory")
-        return serialize_item(db,user_item(db,user['id'],item_id))
+        result = serialize_item(db,user_item(db,user['id'],item_id))
+        db.execute('COMMIT')
+        return result
 
 @app.post("/api/items/{item_id}/duplicate", status_code=201)
 def duplicate_item(item_id: int, user=Depends(csrf)):
     """Create an independent draft. Never clone photos, external links or sales."""
     with connect() as db:
-        db.execute('BEGIN IMMEDIATE')
+        begin_owner_write(db, user['id'])
         original = user_item(db, user['id'], item_id)
         fields = ItemInput.model_fields.keys()
         data = {key: original[key] for key in fields}
@@ -820,15 +840,16 @@ def duplicate_item(item_id: int, user=Depends(csrf)):
         data['quantity'] = 1
         data['title'] = (original['title'][:171] + ' — Copy') if len(original['title']) > 171 else original['title'] + ' — Copy'
         new_id = create_item(db, user['id'], ItemInput.model_validate(data))
-        db.execute('COMMIT')
         record = user_item(db,user['id'],new_id)
-        return {'id':new_id,'item':serialize_item(db,record),
+        result = {'id':new_id,'item':serialize_item(db,record),
                 'notice':'Independent draft created. Photos, external listings and sale history were not copied. Verify all details before publishing.'}
+        db.execute('COMMIT')
+        return result
 
 @app.put("/api/items/{item_id}")
 def edit_item(item_id:int,p:ItemInput,user=Depends(csrf)):
     with connect() as db:
-        db.execute('BEGIN IMMEDIATE')
+        begin_owner_write(db, user['id'])
         item=user_item(db,user['id'],item_id,for_update=True)
         if item['status']=='sold': raise HTTPException(409,"Sold items are locked; make accounting corrections outside this MVP")
         fields=p.model_dump()
@@ -843,7 +864,7 @@ def edit_item(item_id:int,p:ItemInput,user=Depends(csrf)):
 @app.delete("/api/items/{item_id}")
 def archive_item(item_id:int,user=Depends(csrf)):
     with connect() as db:
-        db.execute('BEGIN IMMEDIATE')
+        begin_owner_write(db, user['id'])
         item=user_item(db,user['id'],item_id,for_update=True)
         if item['status']=='sold': raise HTTPException(409,"Sold items cannot be archived")
         live=db.execute("SELECT COUNT(*) FROM item_channels WHERE item_id=? AND status='manually_published'",(item_id,)).fetchone()[0]
@@ -891,30 +912,32 @@ async def upload_photos(item_id: int, photos: list[UploadFile] = File(...), user
         if len(raw) > MAX_PHOTO_BYTES:
             raise HTTPException(413, "Each image must be 6 MB or smaller")
         encoded.append(encode_photo(raw))
-    filenames = []
+    filenames = [secrets.token_hex(16) + '.webp' for _ in encoded]
+    operation = photo_writes.prepare(filenames)
     try:
-        for raw in encoded:
-            name = secrets.token_hex(16) + ".webp"
-            photo_storage.save_photo(name, raw)
-            filenames.append(name)
         with connect() as db:
-            db.execute("BEGIN IMMEDIATE")
+            begin_owner_write(db, user['id'])
             item = user_item(db, user['id'], item_id, for_update=True)
             if item['status'] in ('sold','archived'):
                 raise HTTPException(409, "Cannot change photos on sold or archived items")
             count = db.execute("SELECT COUNT(*) FROM item_photos WHERE item_id=?", (item_id,)).fetchone()[0]
             if count + len(filenames) > MAX_ITEM_PHOTOS:
                 raise HTTPException(409, "Photo limit reached by another upload")
+            photo_writes.lock_operation(db, operation)
+            for name, raw in zip(filenames, encoded):
+                photo_writes.write(operation, name, raw)
+                db.execute('SELECT 1')
             for pos, name in enumerate(filenames, count):
                 db.execute("INSERT INTO item_photos(item_id,file_path,position) VALUES (?,?,?)",(item_id,name,pos))
             if count == 0:
                 db.execute("UPDATE items SET photo_path=? WHERE id=?",(filenames[0],item_id))
             db.execute("UPDATE items SET updated_at=datetime('now') WHERE id=?",(item_id,))
+            result = {"ok": True, "uploaded":len(filenames), "item":serialize_item(db,user_item(db,user['id'],item_id))}
+            photo_writes.finish(db, operation)
             db.execute("COMMIT")
-            return {"ok": True, "uploaded":len(filenames), "item":serialize_item(db,user_item(db,user['id'],item_id))}
+            return result
     except Exception:
-        for name in filenames:
-            photo_storage.delete_photo(name)
+        photo_writes.abort(operation)
         raise
 
 
@@ -948,7 +971,7 @@ def get_gallery_photo(item_id:int,photo_id:int,user=Depends(current_user)):
 @app.delete("/api/items/{item_id}/photos/{photo_id}")
 def delete_gallery_photo(item_id:int,photo_id:int,response:Response,user=Depends(csrf)):
     with connect() as db:
-        db.execute("BEGIN IMMEDIATE")
+        begin_owner_write(db, user['id'])
         item=user_item(db,user['id'],item_id,for_update=True)
         if item['status'] in ('sold','archived'):
             raise HTTPException(409,"Cannot change photos on sold or archived items")
@@ -958,8 +981,8 @@ def delete_gallery_photo(item_id:int,photo_id:int,response:Response,user=Depends
         db.execute("DELETE FROM item_photos WHERE id=?",(photo_id,))
         cover=db.execute("SELECT file_path FROM item_photos WHERE item_id=? ORDER BY position,id LIMIT 1",(item_id,)).fetchone()
         db.execute("UPDATE items SET photo_path=?,updated_at=datetime('now') WHERE id=?",(cover['file_path'] if cover else None,item_id))
-        db.execute("COMMIT")
         updated=serialize_item(db,user_item(db,user['id'],item_id))
+        db.execute("COMMIT")
     cleanup = photo_cleanup.process_pending(names=[photo['file_path']])
     if cleanup['pending']:
         response.status_code = 202
@@ -973,7 +996,7 @@ def reorder_gallery(item_id: int, p: ReorderPhotosInput, user=Depends(csrf)):
     if len(set(p.photo_ids)) != len(p.photo_ids):
         raise HTTPException(422, "Each photograph may appear once")
     with connect() as db:
-        db.execute("BEGIN IMMEDIATE")
+        begin_owner_write(db, user['id'])
         item = user_item(db, user['id'], item_id, for_update=True)
         if item['status'] in ('sold', 'archived'):
             raise HTTPException(409, "Cannot change photos on sold or archived items")
@@ -985,8 +1008,9 @@ def reorder_gallery(item_id: int, p: ReorderPhotosInput, user=Depends(csrf)):
             db.execute("UPDATE item_photos SET position=? WHERE id=? AND item_id=?", (position, photo_id, item_id))
         db.execute("UPDATE items SET photo_path=?,updated_at=datetime('now') WHERE id=?",
                    (current[p.photo_ids[0]], item_id))
+        result = {"ok": True, "item": serialize_item(db, user_item(db, user['id'], item_id))}
         db.execute("COMMIT")
-        return {"ok": True, "item": serialize_item(db, user_item(db, user['id'], item_id))}
+        return result
 
 def validate_listing_url(channel:str,url:str):
     if not url: return
@@ -1003,7 +1027,7 @@ def update_channel(item_id:int,channel:str,p:ChannelInput,user=Depends(csrf)):
     if channel not in CHANNELS: raise HTTPException(404,"Unknown marketplace")
     validate_listing_url(channel,p.listing_url)
     with connect() as db:
-        db.execute('BEGIN IMMEDIATE')
+        begin_owner_write(db, user['id'])
         item=user_item(db,user['id'],item_id,for_update=True)
         if item['status']=='archived': raise HTTPException(409,"Archived item")
         if item['status']=='sold' and p.status in ('ready','manually_published'):
@@ -1051,7 +1075,7 @@ def listing_kit(item_id:int,channel:str,user=Depends(current_user)):
 def mark_sold(item_id:int,p:SaleInput,user=Depends(csrf)):
     if p.channel not in CHANNELS and p.channel!='other': raise HTTPException(422,"Invalid channel")
     with connect() as db:
-        db.execute("BEGIN IMMEDIATE")
+        begin_owner_write(db, user['id'])
         item=user_item(db,user['id'],item_id,for_update=True)
         if item['status'] in ('sold','archived'): raise HTTPException(409,"Item is already sold or archived")
         if item['quantity'] != 1: raise HTTPException(409,"Multi-quantity sales need a separate inventory model. Set quantity to 1 for pilot sales.")
@@ -1062,8 +1086,8 @@ def mark_sold(item_id:int,p:SaleInput,user=Depends(csrf)):
         db.execute("UPDATE item_channels SET status='delist_required',updated_at=datetime('now') WHERE item_id=? AND status='manually_published' AND channel!=?",(item_id,p.channel))
         if p.channel in CHANNELS:
             db.execute("UPDATE item_channels SET status='delisted',updated_at=datetime('now') WHERE item_id=? AND channel=?",(item_id,p.channel))
-        db.execute("COMMIT")
         pending=db.execute("SELECT channel FROM item_channels WHERE item_id=? AND status='delist_required'",(item_id,)).fetchall()
+        db.execute("COMMIT")
     return {"ok":True,"net_profit_cents":p.sold_cents-p.fee_cents-p.ship_cents-item['cost_cents'],
             "manual_delist_channels":[CHANNELS[r['channel']]['name'] for r in pending],
             "notice":"Sale recorded locally. No external marketplace listing was automatically removed."}
@@ -1197,7 +1221,7 @@ async def import_csv(file:UploadFile=File(...),user=Depends(csrf)):
     total,converted,issues=await parse_inventory_csv(file)
     if not total: raise HTTPException(422,"The CSV contains no inventory rows")
     with connect() as db:
-        db.execute("BEGIN IMMEDIATE")
+        begin_owner_write(db, user['id'])
         csv_conflicts(db,user['id'],converted,issues)
         if issues:
             raise HTTPException(409 if all(x['message'].startswith(('Duplicate SKU','SKU already exists')) for x in issues) else 422,
@@ -1214,7 +1238,9 @@ async def import_csv(file:UploadFile=File(...),user=Depends(csrf)):
 @app.post("/api/feedback")
 def feedback(p:FeedbackInput,user=Depends(csrf)):
     with connect() as db:
+        begin_owner_write(db, user['id'])
         db.execute("INSERT INTO feedback(user_id,rating,message) VALUES(?,?,?)",(user['id'],p.rating,p.message.strip()))
+        db.execute('COMMIT')
     return {"ok":True}
 
 @app.post("/api/pilot-request")

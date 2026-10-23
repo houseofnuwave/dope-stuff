@@ -104,5 +104,7 @@ async def retry_loop():
         await asyncio.sleep(30)
         try:
             await asyncio.to_thread(process_pending)
+            from . import photo_writes
+            await asyncio.to_thread(photo_writes.reconcile)
         except Exception:
             logger.warning('Photo cleanup worker could not finish a batch; work remains queued')

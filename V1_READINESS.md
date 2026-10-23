@@ -98,13 +98,48 @@ See `BACKUP_RECOVERY.md` for the complete contract and limits. Portable archives
 remain bounded; this does not replace full provider disaster recovery, immutable
 object retention or multipart backup support for accounts exceeding those budgets.
 
+## Fifth implementation pass: interrupted private-photo writes
+
+Fault injection reproduced a provider accepting an upload and then returning a
+timeout: the old route left one object, no photo metadata and no durable cleanup.
+Uploads and restore staging now commit write intents before provider IO, lock
+them through metadata registration, and transfer known rollback work to the
+deletion queue. Unacknowledged/crashed writes retain cleanup watches that catch
+late provider visibility even after an initial delete. Recovery protects live
+gallery/cover references and cannot retire an active locked registration.
+
+Same-owner content mutations, blank-account restore and account deletion now
+share an owner-row lock on PostgreSQL. Account deletion acquires it before
+snapshotting photos. Responses are constructed before releasing metadata locks,
+avoiding a late response read that could trigger unsafe upload compensation.
+Conflicting restores fail before storage writes. Authentication/token races
+are not claimed solved by these content-operation locks.
+
+Local verification: **114 backend tests passed**, including 24 new write-intent
+checks, a real child-process crash, accepted-then-timeout and delayed visibility,
+partial batches, cleanup/database outages, original-error preservation, commit
+acknowledgement loss, target changes, active recovery locks, competing restores
+and concurrent upload/account deletion on separate app event loops. Python
+compilation and JavaScript syntax passed. Desktop/mobile Chromium seller and
+large-backup/pagination journeys passed without script errors or horizontal
+overflow. Cloud CI repeats the shared timeout, active-write, ambiguous-commit,
+restore and deletion probes against disposable PostgreSQL/private S3; inspect
+the candidate's actual run before claiming that evidence.
+
+This is not an orphan inventory for historical untracked writes or proof of
+provider quiescence. Cleanup-watch growth, operator alerting, safe pruning and
+historical backup/version retention remain operational gates. Slow storage
+holds that seller's content transaction; no latency/deletion-time SLA is claimed.
+See `PHOTO_CLEANUP.md` for the protocol and operator counters.
+
 ## Remaining release gates
 
 - [ ] Observe real seller workflow and establish measurable value.
 - [ ] Finish PostgreSQL concurrency coverage beyond item sale/publication and fix demonstrated races.
 - [x] Implement inventory, publishing, action-queue and sales pagination with boundary and browser tests.
 - [x] Align portable export/restore validation, advertised budgets and larger lifetime-history recovery.
-- [ ] Recover failed-upload/restore cleanup and reconcile interrupted writes.
+- [x] Recover newly tracked failed-upload/restore writes and reconcile process interruptions.
+- [ ] Establish cleanup-watch monitoring/retention, provider quiescence/pruning and historical orphan inventory policy.
 - [ ] Versioned migrations, reproducible dependency lock, upgrade and rollback drills.
 - [ ] Configure and verify real hosted HTTPS, PostgreSQL and private object storage.
 - [ ] Verify database-plus-photo disaster recovery and recovery objectives.

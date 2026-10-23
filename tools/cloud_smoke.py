@@ -58,6 +58,20 @@ def main():
         assert backup.status_code==200 and len(backup.content)>100
         listed=client.get('/api/items').json()
         assert listed['total']==1
+        from tools.photo_write_checks import (assert_unknown_write_recovery, assert_active_write_protected,
+            assert_double_restore_serialized, assert_upload_account_delete_serialized, assert_commit_acknowledgement_safe)
+        assert_unknown_write_recovery(client, token, item)
+        assert_active_write_protected(client, token, item)
+        assert_commit_acknowledgement_safe(client, token, item)
+        # Separate disposable account: these probes deliberately recreate/delete
+        # their supplied account, never the main round-trip fixture below.
+        with TestClient(app) as race_client:
+            race_auth={**auth, 'email': 'ci-write-race@example.com'}
+            registered=race_client.post('/api/auth/register',json=race_auth)
+            assert registered.status_code==200,registered.text
+            assert_double_restore_serialized(race_client, race_auth, item)
+            race_token={'x-csrf-token':race_client.get('/api/session').json()['csrf']}
+            assert_upload_account_delete_serialized(race_client, race_token, item, race_auth['password'])
         from tools.state_race_checks import assert_publish_sale_integrity, assert_double_sale_integrity
         assert_publish_sale_integrity(client, token, item)
         assert_double_sale_integrity(client, token, item)
@@ -69,26 +83,31 @@ def main():
         assert_export_snapshot(client, token, item)
         large_backup=client.get('/api/account/export.zip')
         assert large_backup.status_code==200,large_backup.text
+        with db.connect() as connection:
+            expected_photos=connection.execute('SELECT COUNT(DISTINCT file_path) FROM item_photos').fetchone()[0]
+        assert expected_photos>=2
         # Exercise the real PostgreSQL transaction with private S3 unavailable
         # during deletion, then recover against the same real object store.
         with patch.object(photo_storage, 'delete_photo', side_effect=OSError('test outage')):
             deleted=client.post('/api/account/delete',headers=token,json={
                 'password':auth['password'],'confirmation':'DELETE MY ACCOUNT'})
         assert deleted.status_code==202,deleted.text
-        assert deleted.json()['photo_cleanup_pending']==1
+        assert deleted.json()['photo_cleanup_pending']==expected_photos
         assert client.get('/api/session').json()['authenticated'] is False
         with db.connect() as connection:
             tasks = connection.execute('SELECT file_path FROM photo_deletions').fetchall()
         names = [row['file_path'] for row in tasks]
-        assert len(names)==1
-        assert photo_storage.read_photo(names[0])[:4]==b'RIFF'
-        assert photo_cleanup.process_pending(names=names)=={'completed':1,'pending':0}
-        try:
-            photo_storage.read_photo(names[0])
-        except FileNotFoundError:
-            pass
-        else:
-            raise AssertionError('Deleted account photo remains in object storage')
+        assert len(names)==expected_photos
+        for name in names:
+            assert photo_storage.read_photo(name)[:4]==b'RIFF'
+        assert photo_cleanup.process_pending(names=names,limit=100)=={'completed':expected_photos,'pending':0}
+        for name in names:
+            try:
+                photo_storage.read_photo(name)
+            except FileNotFoundError:
+                pass
+            else:
+                raise AssertionError('Deleted account photo remains in object storage')
         from tools.backup_checks import restore_after_deletion
         restored_headers=restore_after_deletion(client, auth, large_backup.content)
         recovered=[record for record in client.get('/api/items',params={'q':'CI-ONE'}).json()['items']
@@ -99,7 +118,7 @@ def main():
             'password':auth['password'],'confirmation':'DELETE MY ACCOUNT'})
         assert deleted_again.status_code==200,deleted_again.text
         assert photo_cleanup.pending()==0
-    print('CLOUD SMOKE PASSED: Postgres/private S3, state races, pagination, deletion retry, large validated backup and complete recovery.')
+    print('CLOUD SMOKE PASSED: Postgres/private S3, write-timeout recovery, active-write protection, restore/deletion races, pagination, large backup and complete recovery.')
 
 
 if __name__=='__main__': main()

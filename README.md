@@ -22,6 +22,14 @@ Compatibility: `FORM_*` environment variables, cookie/storage identifiers, gener
 
 Licensing: no license was supplied in the source archive. No open-source license is granted by this import; the owner must choose a license before reuse permissions are offered.
 
+Current v1.0 hardening: uploads and backup restore persist photo-write intents
+before storage calls and recover interrupted/uncertain writes. Same-owner content
+operations serialize with account deletion and blank-account restore. Cleanup
+watches intentionally remain after uncertain provider results; active deletion
+does not erase historical backups or object versions. See [PHOTO_CLEANUP.md](PHOTO_CLEANUP.md)
+for operation/monitoring limits and [V1_READINESS.md](V1_READINESS.md) for the
+current evidence and unfinished release gates. This is not a v1.0 release claim.
+
 The verification statements below are historical archive claims, not the results of this public import. See `PUBLIC_IMPORT.md` for current validation.
 
 ## Original v0.7 release notes

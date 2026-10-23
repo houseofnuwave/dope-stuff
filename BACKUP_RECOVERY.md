@@ -58,6 +58,14 @@ fails rather than representing a partial backup as complete. Live exports do
 not replace versioned database/object-store disaster recovery or retention
 policy, which remain v1.0 operational gates.
 
+Restore photo writes now use durable intents before touching storage. Blank-account
+and password checks repeat under an owner lock; competing restores cannot stage
+duplicate photos before detecting a conflict. Failed/uncertain writes remain
+recoverable across process crashes. See `PHOTO_CLEANUP.md` for cleanup watches,
+late provider visibility and remaining retention/throughput boundaries. A failed
+or interrupted response can have an ambiguous commit result: inspect the account
+before retrying; the API does not promise exactly-once request delivery.
+
 ## Verification
 
 Tests reproduce and fix the old 501-item restore failure and missing-photo

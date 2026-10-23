@@ -10,7 +10,7 @@ the original configuration to process its pending work. No secrets are printed.
 import argparse
 import json
 
-from app import db, photo_cleanup
+from app import db, photo_cleanup, photo_writes
 
 
 def main():
@@ -21,7 +21,8 @@ def main():
     db.init_db()
     if args.retry:
         photo_cleanup.process_pending(limit=args.limit)
-    print(json.dumps(photo_cleanup.status(), sort_keys=True))
+        photo_writes.reconcile(limit=args.limit)
+    print(json.dumps({**photo_cleanup.status(), **photo_writes.status()}, sort_keys=True))
 
 
 if __name__ == '__main__':
