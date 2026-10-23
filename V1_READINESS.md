@@ -132,10 +132,40 @@ historical backup/version retention remain operational gates. Slow storage
 holds that seller's content transaction; no latency/deletion-time SLA is claimed.
 See `PHOTO_CLEANUP.md` for the protocol and operator counters.
 
+## Sixth implementation pass: session revocation at the mutation boundary
+
+A deterministic probe reproduced a request authorized before a password change
+still committing an inventory item after revocation completed. Authenticated
+mutations now carry an internal session-version snapshot and compare it again
+after acquiring the owner lock. Revoked waiting writes fail with 401 before any
+records or private storage are changed. Session API and backup public shapes
+remain unchanged; internal authorization values are explicitly excluded.
+
+Password changes verify/update the locked owner row. Recovery issuance and token
+consumption use the same owner-before-token ordering as account deletion. A reset
+token candidate is rechecked under that lock with expiry time measured after the
+wait. Registration captures its own inserted principal in one transaction; login
+verifies the locked current credential. This addresses the known revocation gap
+and adds concurrency coverage, not a claim of complete authentication security.
+
+See `AUTH_CONCURRENCY.md` for test scope, rollout ordering, revocation semantics
+and limitations. Local tests include competing password changes, reset replay,
+concurrent issuance, change/delete versus reset, recovery during deletion and
+login versus change. Route-specific stale-request tests cover inventory, CSV,
+channels, sales, gallery, feedback, account deletion and photo-bearing restore.
+Cloud CI repeats the shared probes against disposable PostgreSQL; candidate
+verification must come from its actual run, not the existence of these tests.
+
+Local candidate validation: **137 backend tests passed**, including 23 new auth
+checks. Python compilation, JavaScript syntax and clean desktop/mobile Chromium
+seller, pagination and backup journeys also passed. Synthetic email capture is
+not real SMTP delivery or mailbox-ownership verification.
+
 ## Remaining release gates
 
 - [ ] Observe real seller workflow and establish measurable value.
 - [ ] Finish PostgreSQL concurrency coverage beyond item sale/publication and fix demonstrated races.
+- [x] Reject revoked in-flight content writes and establish owner-before-token authentication lock ordering with shared race probes.
 - [x] Implement inventory, publishing, action-queue and sales pagination with boundary and browser tests.
 - [x] Align portable export/restore validation, advertised budgets and larger lifetime-history recovery.
 - [x] Recover newly tracked failed-upload/restore writes and reconcile process interruptions.

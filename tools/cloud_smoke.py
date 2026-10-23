@@ -58,6 +58,8 @@ def main():
         assert backup.status_code==200 and len(backup.content)>100
         listed=client.get('/api/items').json()
         assert listed['total']==1
+        from tools.auth_race_checks import run_cloud_auth_checks
+        run_cloud_auth_checks(item)
         from tools.photo_write_checks import (assert_unknown_write_recovery, assert_active_write_protected,
             assert_double_restore_serialized, assert_upload_account_delete_serialized, assert_commit_acknowledgement_safe)
         assert_unknown_write_recovery(client, token, item)
@@ -118,7 +120,7 @@ def main():
             'password':auth['password'],'confirmation':'DELETE MY ACCOUNT'})
         assert deleted_again.status_code==200,deleted_again.text
         assert photo_cleanup.pending()==0
-    print('CLOUD SMOKE PASSED: Postgres/private S3, write-timeout recovery, active-write protection, restore/deletion races, pagination, large backup and complete recovery.')
+    print('CLOUD SMOKE PASSED: Postgres/private S3, auth revocation/token races, write-timeout recovery, active-write protection, restore/deletion races, pagination, large backup and complete recovery.')
 
 
 if __name__=='__main__': main()

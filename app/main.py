@@ -278,7 +278,12 @@ def current_user(request: Request):
     # No session version means an old or invalid cookie. Fail closed.
     if not user or request.session.get('sv') != user['session_version']:
         raise HTTPException(401,"Session expired. Sign in again.")
-    return {k:user[k] for k in ('id','name','email')}
+    return {**public_user(user), '_session_version': user['session_version']}
+
+
+def public_user(user):
+    # The transaction authorization snapshot is internal, not portable data.
+    return {k: user[k] for k in ('id', 'name', 'email')}
 
 
 def csrf(request: Request, user=Depends(current_user)):
@@ -289,12 +294,21 @@ def csrf(request: Request, user=Depends(current_user)):
     return user
 
 
-def begin_owner_write(db, uid):
-    """Serialize same-owner mutations with deletion and blank-account restore."""
-    db.execute('BEGIN IMMEDIATE')
+def lock_owner_row(db, uid):
+    """Every owner/token writer takes the owner lock BEFORE any token locks."""
     suffix = ' FOR UPDATE' if postgres_enabled() else ''
-    if not db.execute('SELECT id FROM users WHERE id=?' + suffix, (uid,)).fetchone():
+    return db.execute('SELECT * FROM users WHERE id=?' + suffix, (uid,)).fetchone()
+
+
+def begin_owner_write(db, user):
+    """Revalidate authorization AFTER serialization, not only in dependencies."""
+    db.execute('BEGIN IMMEDIATE')
+    stored = lock_owner_row(db, user['id'])
+    if not stored:
         raise HTTPException(401, 'Account no longer available. Sign in again.')
+    if user.get('_session_version') != stored['session_version']:
+        raise HTTPException(401, 'Session expired. Sign in again.')
+    return stored
 
 
 def user_item(db, uid:int, item_id:int, *, for_update=False):
@@ -386,7 +400,7 @@ def session(request:Request):
     except HTTPException: return {"authenticated":False,"user":None,"invite_required": bool(os.getenv('FORM_PILOT_INVITE_CODE')), "recovery_available": RECOVERY_MODE != "disabled", "recovery_local": RECOVERY_MODE == "local"}
     if not request.session.get("csrf"):
         request.session["csrf"] = secrets.token_urlsafe(32)
-    return {"authenticated":True,"user":user,"csrf":request.session["csrf"], "recovery_available": RECOVERY_MODE != "disabled", "recovery_local": RECOVERY_MODE == "local", "backup_limits":portable_backup.limits()}
+    return {"authenticated":True,"user":public_user(user),"csrf":request.session["csrf"], "recovery_available": RECOVERY_MODE != "disabled", "recovery_local": RECOVERY_MODE == "local", "backup_limits":portable_backup.limits()}
 
 @app.post("/api/auth/register")
 def register(p:Register,request:Request):
@@ -395,24 +409,28 @@ def register(p:Register,request:Request):
     if invite and not hmac.compare_digest(p.invite_code, invite):
         raise HTTPException(403, "A valid pilot invitation is required")
     with connect() as db:
+        db.execute('BEGIN IMMEDIATE')
         try:
-            db.execute("INSERT INTO users(name,email,password_hash) VALUES(?,?,?)",(p.name.strip(),p.email,ph.hash(p.password)))
+            created = db.execute("INSERT INTO users(name,email,password_hash) VALUES(?,?,?) RETURNING id,session_version",(p.name.strip(),p.email,ph.hash(p.password))).fetchone()
         except sqlite3.IntegrityError: raise HTTPException(409,"An account with that email already exists")
-        uid = db.execute("SELECT id FROM users WHERE email=?",(p.email,)).fetchone()[0]
+        db.execute('COMMIT')
     request.session.clear()
-    request.session.update({"uid":uid,"sv":0,"csrf":secrets.token_urlsafe(32)})
+    request.session.update({"uid":created['id'],"sv":created['session_version'],"csrf":secrets.token_urlsafe(32)})
     return {"ok":True}
 
 @app.post("/api/auth/login")
 def login(p:Credentials,request:Request):
     limiter(request,"login",16)
     with connect() as db:
-        user = db.execute("SELECT * FROM users WHERE email=?",(p.email,)).fetchone()
-    try:
-        if not user: raise VerifyMismatchError("unknown")
-        ph.verify(user["password_hash"],p.password)
-    except (VerifyMismatchError, VerificationError):
-        raise HTTPException(401,"Incorrect email or password")
+        db.execute('BEGIN IMMEDIATE')
+        suffix = ' FOR UPDATE' if postgres_enabled() else ''
+        user = db.execute("SELECT * FROM users WHERE email=?" + suffix,(p.email,)).fetchone()
+        try:
+            if not user: raise VerifyMismatchError("unknown")
+            ph.verify(user["password_hash"],p.password)
+        except (VerifyMismatchError, VerificationError):
+            raise HTTPException(401,"Incorrect email or password")
+        db.execute('COMMIT')
     request.session.clear()
     request.session.update({"uid":user["id"],"sv":user["session_version"],"csrf":secrets.token_urlsafe(32)})
     return {"ok":True}
@@ -430,8 +448,7 @@ def change_password(p: PasswordChangeInput, request: Request, user=Depends(csrf)
     if p.current_password == p.new_password:
         raise HTTPException(422, "Choose a different new password")
     with connect() as db:
-        db.execute('BEGIN IMMEDIATE')
-        stored = db.execute("SELECT password_hash,session_version FROM users WHERE id=?",(user['id'],)).fetchone()
+        stored = begin_owner_write(db, user)
         try:
             if not stored: raise VerifyMismatchError('unknown')
             ph.verify(stored['password_hash'], p.current_password)
@@ -494,16 +511,17 @@ def request_recovery(payload: RecoveryRequest, request: Request):
     limiter(request, 'recovery-request', 5)
     # Lookups and token storage remain account-scoped. Never issue raw token in JSON.
     with connect() as db:
-        row = db.execute('SELECT id FROM users WHERE email=?', (payload.email,)).fetchone()
+        db.execute('BEGIN IMMEDIATE')
+        suffix = ' FOR UPDATE' if postgres_enabled() else ''
+        row = db.execute('SELECT id FROM users WHERE email=?' + suffix, (payload.email,)).fetchone()
         if row:
             token = secrets.token_urlsafe(48)
             digest = hashlib.sha256(token.encode('ascii')).hexdigest()
             now = int(time.time())
-            db.execute('BEGIN IMMEDIATE')
             db.execute('DELETE FROM password_resets WHERE user_id=?', (row['id'],))
             db.execute('INSERT INTO password_resets(user_id,token_hash,expires_at,created_at) VALUES (?,?,?,?)',
                        (row['id'], digest, now + 1800, now))
-            db.execute('COMMIT')
+        db.execute('COMMIT')
     if row:
         try:
             send_recovery_email(payload.email, token)
@@ -521,9 +539,16 @@ def confirm_recovery(payload: RecoveryConfirm, request: Request):
     if not re.fullmatch(r'[A-Za-z0-9_-]{40,200}', payload.token):
         raise HTTPException(400, 'Invalid or expired recovery link')
     digest = hashlib.sha256(payload.token.encode('ascii')).hexdigest()
-    now = int(time.time())
     with connect() as db:
+        # This lookup is only a lock candidate, NOT permission to reset. Recheck
+        # the token under the owner lock, using time measured after lock wait.
+        candidate = db.execute('SELECT user_id FROM password_resets WHERE token_hash=?', (digest,)).fetchone()
+        if not candidate:
+            raise HTTPException(400, 'Invalid or expired recovery link')
         db.execute('BEGIN IMMEDIATE')
+        if not lock_owner_row(db, candidate['user_id']):
+            raise HTTPException(400, 'Invalid or expired recovery link')
+        now = int(time.time())
         used = db.execute("""UPDATE password_resets SET consumed_at=?
             WHERE token_hash=? AND consumed_at IS NULL AND expires_at>?
             RETURNING user_id""", (now, digest, now)).fetchone()
@@ -557,7 +582,7 @@ def export_account(user=Depends(current_user)):
         feedback = [dict(r) for r in db.execute("SELECT * FROM feedback WHERE user_id=? ORDER BY id", (user['id'],))]
     # Explicitly exclude private password hashes and signing/session values.
     backup = {"format": "FORM Seller OS portable backup", "version": 1,
-              "account": user, "items": items, "item_channels": channels,
+              "account": public_user(user), "items": items, "item_channels": channels,
               "item_photos": pictures, "sales": sales, "feedback": feedback,
               "readme": "Personal backup. Do not publicly share; may contain inventory costs, personal notes and photographs."}
     output = portable_backup.build_archive(backup, read_photo=read_portable_photo,
@@ -637,7 +662,7 @@ async def restore_account(request: Request, file: UploadFile = File(...),
     operation = photo_writes.prepare(photo_names.values())
     try:
         with connect() as db:
-            begin_owner_write(db, user['id'])
+            begin_owner_write(db, user)
             # Reauthenticate under the owner lock: deletion/password mutation
             # may have occurred while a large archive was being validated.
             stored = db.execute('SELECT password_hash FROM users WHERE id=?', (user['id'],)).fetchone()
@@ -694,7 +719,7 @@ def delete_account(p: DeleteAccountInput, request: Request, response: Response, 
     """Reauthenticate; delete owner data and local photos; invalidate session."""
     limiter(request, "delete-account", 8)
     with connect() as db:
-        begin_owner_write(db, user['id'])
+        begin_owner_write(db, user)
         stored = db.execute("SELECT password_hash FROM users WHERE id=?", (user['id'],)).fetchone()
         try:
             if not stored: raise VerifyMismatchError("unknown")
@@ -821,7 +846,7 @@ def get_item(item_id:int,user=Depends(current_user)):
 @app.post("/api/items",status_code=201)
 def add_item(p:ItemInput,user=Depends(csrf)):
     with connect() as db:
-        begin_owner_write(db, user['id'])
+        begin_owner_write(db, user)
         try: item_id=create_item(db,user['id'],p)
         except sqlite3.IntegrityError: raise HTTPException(409,"SKU already used in your inventory")
         result = serialize_item(db,user_item(db,user['id'],item_id))
@@ -832,7 +857,7 @@ def add_item(p:ItemInput,user=Depends(csrf)):
 def duplicate_item(item_id: int, user=Depends(csrf)):
     """Create an independent draft. Never clone photos, external links or sales."""
     with connect() as db:
-        begin_owner_write(db, user['id'])
+        begin_owner_write(db, user)
         original = user_item(db, user['id'], item_id)
         fields = ItemInput.model_fields.keys()
         data = {key: original[key] for key in fields}
@@ -849,7 +874,7 @@ def duplicate_item(item_id: int, user=Depends(csrf)):
 @app.put("/api/items/{item_id}")
 def edit_item(item_id:int,p:ItemInput,user=Depends(csrf)):
     with connect() as db:
-        begin_owner_write(db, user['id'])
+        begin_owner_write(db, user)
         item=user_item(db,user['id'],item_id,for_update=True)
         if item['status']=='sold': raise HTTPException(409,"Sold items are locked; make accounting corrections outside this MVP")
         fields=p.model_dump()
@@ -864,7 +889,7 @@ def edit_item(item_id:int,p:ItemInput,user=Depends(csrf)):
 @app.delete("/api/items/{item_id}")
 def archive_item(item_id:int,user=Depends(csrf)):
     with connect() as db:
-        begin_owner_write(db, user['id'])
+        begin_owner_write(db, user)
         item=user_item(db,user['id'],item_id,for_update=True)
         if item['status']=='sold': raise HTTPException(409,"Sold items cannot be archived")
         live=db.execute("SELECT COUNT(*) FROM item_channels WHERE item_id=? AND status='manually_published'",(item_id,)).fetchone()[0]
@@ -916,7 +941,7 @@ async def upload_photos(item_id: int, photos: list[UploadFile] = File(...), user
     operation = photo_writes.prepare(filenames)
     try:
         with connect() as db:
-            begin_owner_write(db, user['id'])
+            begin_owner_write(db, user)
             item = user_item(db, user['id'], item_id, for_update=True)
             if item['status'] in ('sold','archived'):
                 raise HTTPException(409, "Cannot change photos on sold or archived items")
@@ -971,7 +996,7 @@ def get_gallery_photo(item_id:int,photo_id:int,user=Depends(current_user)):
 @app.delete("/api/items/{item_id}/photos/{photo_id}")
 def delete_gallery_photo(item_id:int,photo_id:int,response:Response,user=Depends(csrf)):
     with connect() as db:
-        begin_owner_write(db, user['id'])
+        begin_owner_write(db, user)
         item=user_item(db,user['id'],item_id,for_update=True)
         if item['status'] in ('sold','archived'):
             raise HTTPException(409,"Cannot change photos on sold or archived items")
@@ -996,7 +1021,7 @@ def reorder_gallery(item_id: int, p: ReorderPhotosInput, user=Depends(csrf)):
     if len(set(p.photo_ids)) != len(p.photo_ids):
         raise HTTPException(422, "Each photograph may appear once")
     with connect() as db:
-        begin_owner_write(db, user['id'])
+        begin_owner_write(db, user)
         item = user_item(db, user['id'], item_id, for_update=True)
         if item['status'] in ('sold', 'archived'):
             raise HTTPException(409, "Cannot change photos on sold or archived items")
@@ -1027,7 +1052,7 @@ def update_channel(item_id:int,channel:str,p:ChannelInput,user=Depends(csrf)):
     if channel not in CHANNELS: raise HTTPException(404,"Unknown marketplace")
     validate_listing_url(channel,p.listing_url)
     with connect() as db:
-        begin_owner_write(db, user['id'])
+        begin_owner_write(db, user)
         item=user_item(db,user['id'],item_id,for_update=True)
         if item['status']=='archived': raise HTTPException(409,"Archived item")
         if item['status']=='sold' and p.status in ('ready','manually_published'):
@@ -1075,7 +1100,7 @@ def listing_kit(item_id:int,channel:str,user=Depends(current_user)):
 def mark_sold(item_id:int,p:SaleInput,user=Depends(csrf)):
     if p.channel not in CHANNELS and p.channel!='other': raise HTTPException(422,"Invalid channel")
     with connect() as db:
-        begin_owner_write(db, user['id'])
+        begin_owner_write(db, user)
         item=user_item(db,user['id'],item_id,for_update=True)
         if item['status'] in ('sold','archived'): raise HTTPException(409,"Item is already sold or archived")
         if item['quantity'] != 1: raise HTTPException(409,"Multi-quantity sales need a separate inventory model. Set quantity to 1 for pilot sales.")
@@ -1221,7 +1246,7 @@ async def import_csv(file:UploadFile=File(...),user=Depends(csrf)):
     total,converted,issues=await parse_inventory_csv(file)
     if not total: raise HTTPException(422,"The CSV contains no inventory rows")
     with connect() as db:
-        begin_owner_write(db, user['id'])
+        begin_owner_write(db, user)
         csv_conflicts(db,user['id'],converted,issues)
         if issues:
             raise HTTPException(409 if all(x['message'].startswith(('Duplicate SKU','SKU already exists')) for x in issues) else 422,
@@ -1238,7 +1263,7 @@ async def import_csv(file:UploadFile=File(...),user=Depends(csrf)):
 @app.post("/api/feedback")
 def feedback(p:FeedbackInput,user=Depends(csrf)):
     with connect() as db:
-        begin_owner_write(db, user['id'])
+        begin_owner_write(db, user)
         db.execute("INSERT INTO feedback(user_id,rating,message) VALUES(?,?,?)",(user['id'],p.rating,p.message.strip()))
         db.execute('COMMIT')
     return {"ok":True}

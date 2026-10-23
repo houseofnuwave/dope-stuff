@@ -29,6 +29,9 @@ watches intentionally remain after uncertain provider results; active deletion
 does not erase historical backups or object versions. See [PHOTO_CLEANUP.md](PHOTO_CLEANUP.md)
 for operation/monitoring limits and [V1_READINESS.md](V1_READINESS.md) for the
 current evidence and unfinished release gates. This is not a v1.0 release claim.
+Authenticated writes also recheck session revocation under the owner lock;
+password/reset/deletion operations share a documented lock order. See
+[AUTH_CONCURRENCY.md](AUTH_CONCURRENCY.md) for the guarantees and remaining auth gates.
 
 The verification statements below are historical archive claims, not the results of this public import. See `PUBLIC_IMPORT.md` for current validation.
 
