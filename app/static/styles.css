@@ -61,3 +61,6 @@
 
 /* v1.0: six genuine mobile routes, no hidden Sales or Action Center. */
 @media(max-width:850px){.mobile-nav{gap:1px}.mobile-nav button{flex:1;min-width:0;padding:4px 2px;overflow:hidden;font-size:9px;white-space:nowrap}}
+
+/* Seller offer lab */
+.offer-lab-form{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.offer-lab-form label{display:flex;flex-direction:column;gap:7px;font-weight:600;font-size:13px}.offer-lab-form label:first-child,.offer-lab-form p{grid-column:1/-1}.offer-lab-form input,.offer-lab-form select{width:100%;min-width:0}.offer-value{font-size:clamp(36px,6vw,62px);letter-spacing:-.05em;font-weight:700;line-height:1.2;margin-top:22px}.offer-profit{padding:14px 16px;background:#e8f0e6;border-radius:12px;margin:18px 0;color:#29442b}.offer-loss{color:#9c443d!important;background:#f9e9e6}.offer-breakdown>div{display:flex;justify-content:space-between;align-items:baseline;gap:16px;padding:12px 0;border-bottom:1px solid var(--line)}.offer-breakdown span{font-size:13px}.offer-breakdown strong{white-space:nowrap}@media(max-width:560px){.offer-lab-form{grid-template-columns:1fr}}
