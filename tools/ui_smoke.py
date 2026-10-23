@@ -234,6 +234,9 @@ def run():
                 assert api.get('/api/session').json()['authenticated'] is True
                 print('CHECK',device,'email recovery',flush=True)
 
+                from tools.ui_pagination import run_pagination_journey
+                run_pagination_journey(page, api, device)
+
                 overflow=page.evaluate('document.documentElement.scrollWidth>window.innerWidth')
                 print(device,'UI + backup restore', 'PASS' if not errors else 'ERROR',
                     'js_errors',errors,'horizontal_overflow',overflow)

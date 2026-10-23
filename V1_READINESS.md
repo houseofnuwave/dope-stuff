@@ -40,11 +40,40 @@ passed its PostgreSQL/private-storage outage-recovery job. The new candidate sti
 requires its own complete CI result. Account-deletion versus concurrent writes,
 restore concurrency and authentication races remain separate investigation work.
 
-## Outstanding release gates
+## Third implementation pass: reachable lists and honest totals
+
+Inventory, publishing selection, manual-removal tasks and sales now have 50-row
+pages with previous/next controls, ranges and full matching totals. Search and
+filters reset paging; deleting the final task on a page clamps to the preceding
+page. Older items can still be edited, prepared and selected even when outside
+the current publishing page. Failed page requests keep the last good page;
+out-of-order search responses cannot overwrite a newer result.
+
+Sales counts and revenue charts use full-account aggregates, not the currently
+visible page. Page count and row queries share a read snapshot so a concurrent
+sale cannot produce an internally contradictory page. Separate page requests
+remain live views: changes by another session can shift positions between pages.
+Search and CSV export remain available for finding/exporting records.
+
+Local validation: **71 backend tests passed**, including 11 new pagination,
+owner-isolation, empty-page and concurrent-count checks. Clean desktop/mobile
+Chromium journeys passed editing/publishing beyond 200 items, search races, a
+simulated failed page request, clearing the sole task beyond 200 removals, and
+paging through 703 sales with full totals. JavaScript syntax, Python compilation
+and layout-overflow checks passed. Cloud CI also exercises old-cap boundaries
+and count snapshots against PostgreSQL; verify the candidate's actual run before
+claiming cloud validation.
+
+The portable account-restore limit remains 500 items. Pagination does not change
+that limit. Backup/export/restore bounds must be reconciled with lifetime catalog
+size before v1.0; browsing large histories is not proof that they are recoverable.
+
+## Remaining release gates
 
 - [ ] Observe real seller workflow and establish measurable value.
 - [ ] Finish PostgreSQL concurrency coverage beyond item sale/publication and fix demonstrated races.
-- [ ] Complete inventory, action-queue and sales pagination without silent omissions.
+- [x] Implement inventory, publishing, action-queue and sales pagination with boundary and browser tests.
+- [ ] Reconcile portable restore bounds with complete lifetime inventory and sales history.
 - [ ] Recover failed-upload/restore cleanup and reconcile interrupted writes.
 - [ ] Versioned migrations, reproducible dependency lock, upgrade and rollback drills.
 - [ ] Configure and verify real hosted HTTPS, PostgreSQL and private object storage.

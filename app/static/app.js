@@ -34,7 +34,9 @@ const icons={
  ellipsis:'<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>'
 };
 const icon=(name,size=18)=>`<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${icons[name]||icons.box}</svg>`;
-const S={session:null,items:[],overview:null,sales:[],channels:{},nav:'overview',filter:'all',q:'',catalog:[],activeId:null,pendingImport:null,pendingRestore:null,insights:null,actions:[]};
+const PAGE_SIZE=50;
+const S={session:null,items:[],overview:null,sales:[],channels:{},nav:'overview',filter:'all',q:'',catalog:[],activeId:null,selectedItem:null,publishQ:'',pages:{inventory:0,publish:0,actions:0,sales:0},totals:{inventory:0,publish:0,actions:0,sales:0},pendingImport:null,pendingRestore:null,insights:null,actions:[]};
+let reloadGeneration=0;
 const APP=$('#app');
 const toast=(msg,error=false)=>{const el=document.createElement('div');el.className='toast'+(error?' error':'');el.textContent=msg;$('#toast-root').append(el);setTimeout(()=>el.remove(),4500);};
 async function api(url,{method='GET',body,form=false}={}){
@@ -43,7 +45,7 @@ async function api(url,{method='GET',body,form=false}={}){
   if(body!==undefined){options.body=form?body:JSON.stringify(body);if(!form)options.headers['Content-Type']='application/json';}
   let r;
   try{r=await fetch(url,options);}catch{throw Error('Unable to reach the app. Check your connection.');}
-  if(!r.ok){let detail=`Request failed (${r.status})`;try{const j=await r.json();detail=Array.isArray(j.detail)?j.detail.map(e=>e.msg).join('; '):j.detail||detail;}catch{};throw Error(detail);}
+  if(!r.ok){let detail=`Request failed (${r.status})`;try{const j=await r.json();detail=Array.isArray(j.detail)?j.detail.map(e=>e.msg).join('; '):j.detail||detail;}catch{};const error=Error(detail);error.status=r.status;throw error;}
   const ct=r.headers.get('content-type')||'';
   return ct.includes('json')?r.json():r;
 }
@@ -55,6 +57,17 @@ const itemLine=(it)=>`<div class="item-cell">${thumbnail(it)}<div><div class="ta
 const countLive=it=>Object.values(it.channels||{}).filter(x=>x.status==='manually_published').length;
 const countAction=it=>Object.values(it.channels||{}).filter(x=>x.status==='delist_required').length;
 function empty(iconName,title,body,action=''){return `<div class="empty"><div class="empty-icon">${icon(iconName)}</div><h3>${title}</h3><p>${body}</p>${action}</div>`;}
+function pageControls(section){
+ const total=S.totals[section],page=S.pages[section],pages=Math.max(1,Math.ceil(total/PAGE_SIZE));
+ const start=total?page*PAGE_SIZE+1:0,end=Math.min((page+1)*PAGE_SIZE,total);
+ return `<nav class="pagination row wrap between" aria-label="${section} pages"><button class="btn secondary small" data-action="page" data-section="${section}" data-page="${page-1}" ${page===0?'disabled':''}>Previous</button><span class="small muted" role="status" tabindex="-1" aria-live="polite">${start}–${end} of ${total} · Page ${page+1} of ${pages}</span><button class="btn secondary small" data-action="page" data-section="${section}" data-page="${page+1}" ${page+1>=pages?'disabled':''}>Next</button></nav>`;
+}
+function resetLists(){
+ clearTimeout(searchTimeout);
+ reloadGeneration++;S.pages={inventory:0,publish:0,actions:0,sales:0};S.totals={inventory:0,publish:0,actions:0,sales:0};
+ S.items=[];S.catalog=[];S.sales=[];S.actions=[];S.overview=null;S.insights=null;
+ S.activeId=null;S.selectedItem=null;S.q='';S.publishQ='';S.filter='all';
+}
 function authLanding(){
   APP.innerHTML=`<div class="landing">
     <header class="land-nav"><div class="brand">Dope Stuff<span>SELLER OS</span></div><div class="row"><button class="btn secondary small" data-action="login">Log in</button><button class="btn small" data-action="register">Get started ${icon('arrow',15)}</button></div></header>
@@ -89,32 +102,32 @@ function overviewView(){
 function inventoryView(){
  const actions=`<div class="row wrap"><button class="btn secondary small" data-action="import">${icon('upload',15)} Import CSV</button><button class="btn secondary small" data-action="export">${icon('download',15)} Export</button><button class="btn" data-action="new">${icon('plus')} New listing</button></div>`;
  return `${head('Your inventory.','Every item has one canonical record and SKU.',actions)}
- <div class="card"><div style="padding:20px"><div class="toolbar"><div class="filters">${['all','draft','active','sold','archived'].map(x=>`<button class="filter ${S.filter===x?'active':''}" data-filter="${x}">${x==='all'?'All':status(x)}</button>`).join('')}</div><div class="row"><input id="inventory-search" value="${attr(S.q)}" placeholder="Search title, brand or SKU" aria-label="Search inventory"></div></div><div class="tiny muted">${S.items.length} items shown · Active statuses are seller-reported</div></div>${recentTable(S.items,true)}</div><p class="fineprint" style="margin-top:14px">Archiving an item here will not remove any listing from an external website.</p>`;
+ <div class="card"><div style="padding:20px"><div class="toolbar"><div class="filters">${['all','draft','active','sold','archived'].map(x=>`<button class="filter ${S.filter===x?'active':''}" data-filter="${x}">${x==='all'?'All':status(x)}</button>`).join('')}</div><div class="row"><input id="inventory-search" value="${attr(S.q)}" placeholder="Search title, brand or SKU" aria-label="Search inventory"></div></div><div class="tiny muted">${S.items.length} of ${S.totals.inventory} matching items shown · Active statuses are seller-reported</div></div>${!S.items.length&&(S.q||S.filter!=='all')?empty('search','No matching inventory','Try another search or filter.'):recentTable(S.items,true)}${pageControls('inventory')}</div><p class="fineprint" style="margin-top:14px">Archiving an item here will not remove any listing from an external website.</p>`;
 }
 function publishView(){
  const channels=Object.entries(S.channels);
- const current=S.catalog.find(x=>x.id===S.activeId)||S.catalog.find(x=>x.status!=='sold')||S.catalog[0];
- const select=`<select id="publish-item" aria-label="Select inventory item"><option value="">Choose an item</option>${S.catalog.map(it=>`<option value="${it.id}" ${current?.id===it.id?'selected':''}>${escapeHtml(it.title)} (${escapeHtml(it.sku)})</option>`).join('')}</select>`;
- return `${head('Publish studio.','Prepare channel-ready drafts, then complete publishing yourself.',`<button class="btn" data-action="new">${icon('plus')} New listing</button>`)}<div class="notice small" style="margin-bottom:18px">${icon('shield')} All marketplace workflows are currently manual-assisted. Nothing on this screen automatically posts, edits, or deletes an external listing.</div><div class="card card-pad" style="margin-bottom:18px"><div class="eyebrow">STEP 01</div><div class="between wrap"><div><h3 style="margin:8px 0 5px">Select an inventory item</h3><p class="small" style="margin:0">Only items you own can be prepared for listing.</p></div><div style="width:min(100%,390px)">${select}</div></div></div><div class="between" style="margin:20px 0 14px"><h3 style="margin:0">Marketplace workflows</h3><span class="pill">${channels.length} supported manual workspaces</span></div>
+ const current=S.selectedItem||S.catalog.find(x=>x.id===S.activeId)||S.catalog.find(x=>x.status!=='sold')||S.catalog[0];
+ const select=`<select id="publish-item" aria-label="Select inventory item"><option value="">Choose an item</option>${(current&&!S.catalog.some(it=>it.id===current.id)?[current,...S.catalog]:S.catalog).map(it=>`<option value="${it.id}" ${current?.id===it.id?'selected':''}>${escapeHtml(it.title)} (${escapeHtml(it.sku)})</option>`).join('')}</select>`;
+ return `${head('Publish studio.','Prepare channel-ready drafts, then complete publishing yourself.',`<button class="btn" data-action="new">${icon('plus')} New listing</button>`)}<div class="notice small" style="margin-bottom:18px">${icon('shield')} All marketplace workflows are currently manual-assisted. Nothing on this screen automatically posts, edits, or deletes an external listing.</div><div class="card card-pad" style="margin-bottom:18px"><div class="eyebrow">STEP 01</div><div class="between wrap"><div><h3 style="margin:8px 0 5px">Select an inventory item</h3><p class="small" style="margin:0">Only items you own can be prepared for listing.</p></div><div style="width:min(100%,390px)"><label class="small" for="publish-search">Search title, brand or SKU</label><input id="publish-search" value="${attr(S.publishQ)}" placeholder="Search all your inventory">${select}</div></div>${pageControls('publish')}</div><div class="between" style="margin:20px 0 14px"><h3 style="margin:0">Marketplace workflows</h3><span class="pill">${channels.length} supported manual workspaces</span></div>
  ${current?`<div class="readiness-overview card card-pad"><div><div class="eyebrow">LISTING QUALITY CONTROL</div><h3 style="margin:7px 0 5px">${current.readiness.complete} of ${current.readiness.total} details prepared.</h3><p class="small">${current.readiness.complete===current.readiness.total?'The record is documented. Verify accuracy before publishing.':'Fill the missing details to help buyers assess the actual item.'} This is not an authenticity or condition guarantee.</p></div><button class="btn secondary small" data-action="edit" data-id="${current.id}" ${current.status==='sold'?'disabled':''}>Review item ${icon('arrow',14)}</button></div>`:''}
- <div class="channel-grid">${channels.map(([key,c])=>{const entry=current?.channels?.[key];const st=entry?.status||'not_started';return `<div class="card channel-card"><div><div class="between"><div class="channel-badge">${c.name[0]}</div>${statusPill(st)}</div><h3 style="font-size:21px;margin:15px 0 5px">${escapeHtml(c.name)}</h3><p>Generate draft and open marketplace. Mark the listing published after confirming yourself.</p></div><button class="btn small ${st==='delist_required'?'danger':'secondary'}" data-action="${st==='delist_required'?'delist':'kit'}" data-id="${current?.id||''}" data-channel="${key}" ${!current||(current.status==='sold'&&st!=='delist_required')?'disabled':''}>${st==='delist_required'?'Review removal':current?.status==='sold'?'Sold item':'Prepare listing'} ${icon('arrow',14)}</button></div>`;}).join('')}</div>`;
+ <div class="channel-grid">${channels.map(([key,c])=>{const entry=current?.channels?.[key];const st=entry?.status||'not_started';return `<div class="card channel-card"><div><div class="between"><div class="channel-badge">${c.name[0]}</div>${statusPill(st)}</div><h3 style="font-size:21px;margin:15px 0 5px">${escapeHtml(c.name)}</h3><p>Generate draft and open marketplace. Mark the listing published after confirming yourself.</p></div><button class="btn small ${st==='delist_required'?'danger':'secondary'}" data-action="${st==='delist_required'?'delist':'kit'}" data-id="${current?.id||''}" data-channel="${key}" ${!current||(['sold','archived'].includes(current.status)&&st!=='delist_required')?'disabled':''}>${st==='delist_required'?'Review removal':current?.status==='sold'?'Sold item':'Prepare listing'} ${icon('arrow',14)}</button></div>`;}).join('')}</div>`;
 }
 function actionsView(){
  const actions=S.actions||[];
- const count=S.overview?.action_required||actions.length;
+ const count=S.totals.actions;
  return `${head('Action center.','Prevent double sales by removing sold items from other marketplaces yourself.')}
  <div class="alert" style="margin:0 0 20px">${icon('alert')} <strong>${count} external listing${count===1?'':'s'} awaiting manual removal.</strong> Dope Stuff never remotely deletes listings. Mark each task done only after verifying removal on the marketplace.</div>
- ${actions.length?`<div class="card"><div class="card-pad"><div class="eyebrow">MANUAL REMOVAL QUEUE</div><h3>Protect the next buyer.</h3><p class="small">Oldest seller-reported listing first. A sold item can still be visible on another platform until you personally remove it.</p></div>${actions.map(a=>`<div class="seller-check action-item"><div style="flex:1;min-width:0"><div class="eyebrow">${escapeHtml(a.display_name)}</div><h3 style="font-size:17px;margin:6px 0">${escapeHtml(a.title)}</h3><div class="tiny muted">SKU ${escapeHtml(a.sku)} · Needs manual removal</div>${a.listing_url?`<a href="${attr(a.listing_url)}" target="_blank" rel="noopener noreferrer" class="inline-link">Open listing on marketplace ${icon('arrow',13)}</a>`:'<p class="tiny muted" style="margin-top:7px">No listing link saved — locate this item in your marketplace account.</p>'}</div><button class="btn small secondary" data-action="clear-delist" data-id="${a.item_id}" data-channel="${attr(a.channel)}">I removed it ${icon('checkcircle',14)}</button></div>`).join('')}</div>`:empty('checkcircle','Your removal queue is clear','No listings currently require manual delisting. This reflects only the marketplace statuses you have recorded in Dope Stuff.')}
+ ${actions.length?`<div class="card">${pageControls('actions')}<div class="card-pad"><div class="eyebrow">MANUAL REMOVAL QUEUE</div><h3>Protect the next buyer.</h3><p class="small">Oldest seller-reported listing first. A sold item can still be visible on another platform until you personally remove it.</p></div>${actions.map(a=>`<div class="seller-check action-item"><div style="flex:1;min-width:0"><div class="eyebrow">${escapeHtml(a.display_name)}</div><h3 style="font-size:17px;margin:6px 0">${escapeHtml(a.title)}</h3><div class="tiny muted">SKU ${escapeHtml(a.sku)} · Needs manual removal</div>${a.listing_url?`<a href="${attr(a.listing_url)}" target="_blank" rel="noopener noreferrer" class="inline-link">Open listing on marketplace ${icon('arrow',13)}</a>`:'<p class="tiny muted" style="margin-top:7px">No listing link saved — locate this item in your marketplace account.</p>'}</div><button class="btn small secondary" data-action="clear-delist" data-id="${a.item_id}" data-channel="${attr(a.channel)}">I removed it ${icon('checkcircle',14)}</button></div>`).join('')}</div>`:S.totals.actions?empty('alert','This page changed','Reload the queue to see remaining tasks.',`<button class="btn secondary" data-action="reload-lists">Reload queue</button>`):empty('checkcircle','Your removal queue is clear','No listings currently require manual delisting. This reflects only the marketplace statuses you have recorded in Dope Stuff.')}
  <p class="fineprint" style="margin-top:16px">The queue is based entirely on seller-entered information. Dope Stuff cannot detect outside sales or confirm live listings.</p>`;
 }
 function salesView(){
  const sales=S.sales;const gross=S.insights?.totals?.gross_cents||0,profit=S.insights?.totals?.profit_cents||0;
- const by={};for(const s of sales)by[s.channel]=(by[s.channel]||0)+s.sold_cents;
+ const by={};for(const channel of S.insights?.channels||[])by[channel.channel]=channel.gross_cents;
  const rows=Object.entries(by).sort((a,b)=>b[1]-a[1]);const max=Math.max(...rows.map(x=>x[1]),1);
  return `${head('Sales & profit.','Track actual transactions, fees, shipping and cost of goods.',`<a href="/api/sales-export.csv" download class="btn secondary">${icon('download',15)} Export sales CSV</a>`)}
- <div class="stats" style="grid-template-columns:repeat(3,1fr)"><div class="card metric"><div class="metric-label">Total sales</div><div class="value">${sales.length}</div><div class="metric-foot">Manually recorded</div></div><div class="card metric"><div class="metric-label">Gross sales</div><div class="value">${money(gross)}</div><div class="metric-foot">Before fees & costs</div></div><div class="card metric"><div class="metric-label">Net profit</div><div class="value">${money(profit)}</div><div class="metric-foot">Not tax-adjusted</div></div></div>
+ <div class="stats" style="grid-template-columns:repeat(3,1fr)"><div class="card metric"><div class="metric-label">Total sales</div><div class="value">${S.totals.sales}</div><div class="metric-foot">Manually recorded</div></div><div class="card metric"><div class="metric-label">Gross sales</div><div class="value">${money(gross)}</div><div class="metric-foot">Before fees & costs</div></div><div class="card metric"><div class="metric-label">Net profit</div><div class="value">${money(profit)}</div><div class="metric-foot">Not tax-adjusted</div></div></div>
  <div class="card card-pad" style="margin:0 0 18px"><div class="eyebrow">REALIZED PERFORMANCE BY CHANNEL</div><div class="table-scroll"><table class="data-table"><thead><tr><th>Marketplace</th><th>Sales</th><th>Gross</th><th>Net profit</th><th>Margin</th></tr></thead><tbody>${(S.insights?.channels||[]).length?(S.insights?.channels||[]).map(c=>`<tr><td><b>${escapeHtml(c.display_name)}</b></td><td>${c.sales}</td><td>${money(c.gross_cents)}</td><td><b>${money(c.profit_cents)}</b></td><td>${c.gross_cents?(100*c.profit_cents/c.gross_cents).toFixed(1)+'%':'—'}</td></tr>`).join(''):'<tr><td colspan="5" class="muted">Record your first sale to compare marketplaces.</td></tr>'}</tbody></table></div><p class="fineprint" style="margin-top:12px">${escapeHtml(S.insights?.disclaimer||'Seller-reported transactions only.')}</p></div>
- <div class="two-col"><div class="card"><div class="card-pad"><h3>Transactions</h3><p class="small">Use the Sold button on inventory items to record sales.</p></div>${sales.length?`<div class="table-scroll"><table class="data-table"><thead><tr><th>Item</th><th>Channel</th><th>Sale</th><th>Profit</th></tr></thead><tbody>${sales.map(s=>`<tr><td><b class="small">${escapeHtml(s.title)}</b><div class="tiny muted">${escapeHtml(s.sku)}</div></td><td>${escapeHtml(S.channels[s.channel]?.name||s.channel)}</td><td>${money(s.sold_cents)}</td><td class="strong">${money(s.sold_cents-s.fee_cents-s.ship_cents-s.cost_cents)}</td></tr>`).join('')}</tbody></table></div>`:empty('chart','No sales recorded','Record your first sale from an inventory item.')}</div><div class="card card-pad"><h3>Revenue by marketplace</h3><p class="small">Based on the channel selected when recording a sale.</p>${rows.length?rows.map(([c,v])=>`<div style="margin:22px 0"><div class="between small" style="margin-bottom:7px"><b>${escapeHtml(S.channels[c]?.name||c)}</b><span>${money(v)}</span></div><div class="progress-track"><div class="progress-fill" style="width:${Math.round(100*v/max)}%"></div></div></div>`).join(''):empty('chart','No channel data','Your channel breakdown will appear after a recorded sale.')}</div></div>`;
+ <div class="two-col"><div class="card"><div class="card-pad"><h3>Transactions</h3><p class="small">Use the Sold button on inventory items to record sales.</p>${pageControls('sales')}</div>${sales.length?`<div class="table-scroll"><table class="data-table"><thead><tr><th>Item</th><th>Channel</th><th>Sale</th><th>Profit</th></tr></thead><tbody>${sales.map(s=>`<tr><td><b class="small">${escapeHtml(s.title)}</b><div class="tiny muted">${escapeHtml(s.sku)}</div></td><td>${escapeHtml(S.channels[s.channel]?.name||s.channel)}</td><td>${money(s.sold_cents)}</td><td class="strong">${money(s.sold_cents-s.fee_cents-s.ship_cents-s.cost_cents)}</td></tr>`).join('')}</tbody></table></div>`:empty('chart','No sales recorded','Record your first sale from an inventory item.')}</div><div class="card card-pad"><h3>Revenue by marketplace</h3><p class="small">Based on the channel selected when recording a sale.</p>${rows.length?rows.map(([c,v])=>`<div style="margin:22px 0"><div class="between small" style="margin-bottom:7px"><b>${escapeHtml(S.channels[c]?.name||c)}</b><span>${money(v)}</span></div><div class="progress-track"><div class="progress-fill" style="width:${Math.round(100*v/max)}%"></div></div></div>`).join(''):empty('chart','No channel data','Your channel breakdown will appear after a recorded sale.')}</div></div>`;
 }
 function plansView(){
  const tiers=[['Starter','$14.99','For casual sellers',['100 new items monthly','Unlimited stored inventory','Assisted publishing','Basic sales tracking']],['Pro','$39.99','For working resellers',['500 new items monthly','Bulk preparation','Advanced profit analytics','Priority marketplace workflows']],['Studio','$89.99','For resale operations',['2,000 new items monthly','Team access (future)','Advanced reporting','Priority support (future)']]];
@@ -135,8 +148,30 @@ function restoreAccountModal(){S.pendingRestore=null;modal('Restore a Dope Stuff
 function deleteAccountModal(){modal('Permanently delete Dope Stuff account',`<div class="alert small">${icon('alert')} This action cannot be undone. Download your backup first. Any published marketplace listings stay live until you remove them yourself.</div>
  <form id="delete-account-form" style="margin-top:20px" class="stack"><div class="form-block"><label for="delete-confirm">Type DELETE MY ACCOUNT to confirm</label><input id="delete-confirm" name="confirmation" autocomplete="off" required pattern="DELETE MY ACCOUNT" placeholder="DELETE MY ACCOUNT"></div><div class="form-block"><label for="delete-password">Current password</label><input id="delete-password" type="password" name="password" autocomplete="current-password" required minlength="10"></div><button class="btn danger full" type="submit">Permanently delete my data</button></form>`, '', false);}
 function render(){if(!S.session?.authenticated){authLanding();return;}shell();let html={overview:overviewView,inventory:inventoryView,publish:publishView,sales:salesView,plans:plansView,feedback:feedbackView,account:accountView,actions:actionsView}[S.nav]?.()||overviewView();$('#screen').innerHTML=html;}
-async function reloadData(){if(!S.session?.authenticated)return;const [a,b,c,d,e,f,g]=await Promise.all([api('/api/overview'),api(`/api/items?status=${encodeURIComponent(S.filter)}&q=${encodeURIComponent(S.q)}&limit=200`),api('/api/channels'),api('/api/sales'),api('/api/items?status=all&limit=200'),api('/api/insights'),api('/api/actions')]);S.overview=a;S.items=b.items;S.channels=c.channels;S.sales=d.sales;S.catalog=e.items;S.insights=f;S.actions=g.actions;}
-async function refresh(){await reloadData();render();}
+async function fetchListPage(path,key,page){
+ const query=path.includes('?')?'&':'?';
+ let data=await api(`${path}${query}limit=${PAGE_SIZE}&offset=${page*PAGE_SIZE}`);
+ const last=Math.max(0,Math.ceil(data.total/PAGE_SIZE)-1);
+ if(page>last){page=last;data=await api(`${path}${query}limit=${PAGE_SIZE}&offset=${page*PAGE_SIZE}`);}
+ return {rows:data[key],total:data.total,page};
+}
+async function reloadData(options={}){
+ if(!S.session?.authenticated)return false;
+ const generation=++reloadGeneration,owner=S.session.user.id,pages={...(options.pages||S.pages)},activeId=options.clearSelection?null:S.activeId;
+ const [a,b,c,d,e,f,g]=await Promise.all([api('/api/overview'),
+  fetchListPage(`/api/items?status=${encodeURIComponent(S.filter)}&q=${encodeURIComponent(S.q)}`,'items',pages.inventory),
+  api('/api/channels'),fetchListPage('/api/sales','sales',pages.sales),
+  fetchListPage(`/api/items?status=all&q=${encodeURIComponent(S.publishQ)}`,'items',pages.publish),
+  api('/api/insights'),fetchListPage('/api/actions','actions',pages.actions)]);
+ let selected=e.rows.find(item=>item.id===activeId)||b.rows.find(item=>item.id===activeId)||null;
+ if(activeId&&!selected){try{selected=await api(`/api/items/${activeId}`);}catch(error){if(error.status!==404)throw error;}}
+ if(generation!==reloadGeneration||!S.session?.authenticated||S.session.user.id!==owner)return false;
+ S.overview=a;S.items=b.rows;S.channels=c.channels;S.sales=d.rows;S.catalog=e.rows;S.insights=f;S.actions=g.rows;S.selectedItem=selected;
+ if(options.clearSelection)S.activeId=null;
+ for(const [section,data] of Object.entries({inventory:b,sales:d,publish:e,actions:g})){S.pages[section]=data.page;S.totals[section]=data.total;}
+ return true;
+}
+async function refresh(){if(await reloadData())render();}
 async function init(){const hash=location.hash.slice(1);let token='';if(hash.startsWith('reset=')){try{token=decodeURIComponent(hash.slice(6));}catch(e){}try{history.replaceState(null,'',location.pathname+location.search);}catch(e){location.hash='';}}try{S.session=await api('/api/session');if(S.session.authenticated){await reloadData();}}catch(e){toast(e.message,true);}if(['overview','inventory','publish','sales','plans','feedback','account','actions'].includes(hash))S.nav=hash;render();if(token){S.resetToken=token;resetPasswordModal();}}
 function nav(n){S.nav=n;location.hash=n;render();window.scrollTo({top:0,behavior:'instant'});}
 let modalReturnFocus=null;
@@ -176,15 +211,16 @@ async function itemFormSubmit(form){
  const item=await api(id?`/api/items/${id}`:'/api/items',{method:id?'PUT':'POST',body});
  const selected=f.getAll('photos').filter(x=>x instanceof File&&x.size);
  if(selected.length){try{
-   if(selected.length+(id?S.catalog.find(x=>x.id===id)?.photo_count||0:0)>8)throw Error('Maximum 8 photos per item.');
+   if(selected.length+(id?item.photo_count||0:0)>8)throw Error('Maximum 8 photos per item.');
    if(selected.some(x=>x.size>6*1024*1024))throw Error('Each photo must be 6 MB or smaller.');
    const fd=new FormData();selected.forEach(photo=>fd.append('photos',photo));
    await api(`/api/items/${item.id}/photos`,{method:'POST',body:fd,form:true});
  }catch(e){toast('Item saved, but photos failed: '+e.message,true);}}
+ if(!id){S.pages.inventory=0;S.filter='all';S.q='';}
  closeModal();toast(id?'Item updated':'Item created');await refresh();
 }
 function kitModal(it,channel){
- if(!it){toast('Choose a listing first',true);return;}S.activeId=it.id;
+ if(!it){toast('Choose a listing first',true);return;}S.activeId=it.id;S.selectedItem=it;
  api(`/api/items/${it.id}/kit/${channel}`).then(k=>{
   const st=it.channels[channel]?.status||'not_started';
   modal(`Prepare for ${S.channels[channel].name}`,`<div class="selected-item">${thumbnail(it)}<div><b>${escapeHtml(it.title)}</b><div class="tiny muted">${escapeHtml(it.sku)} · ${money(it.price_cents)}</div></div></div><div class="notice small">${icon('shield')} This tool does not auto-publish to ${escapeHtml(S.channels[channel].name)}. Complete posting in the destination app.</div>
@@ -215,22 +251,32 @@ function sampleItems(){return [
  {title:'Oversized charcoal hoodie',sku:'SAMPLE-003',brand:'Unbranded',category:'Hoodies',size:'L',color:'Charcoal',condition:'New without tags',description:'SAMPLE DATA. Verify fabric, sizing and product details before publishing.',notes:'Demonstration listing — not real stock.',price_cents:12500,cost_cents:4000,shipping_cents:900,quantity:1}
 ];}
 async function handleAction(el,e){
- const action=el.dataset.action;const id=Number(el.dataset.id||0),item=S.catalog.find(x=>x.id===id)||S.overview?.latest?.find(x=>x.id===id),channel=el.dataset.channel;
+ const action=el.dataset.action;const id=Number(el.dataset.id||0),channel=el.dataset.channel;
+ let item=S.items.find(x=>x.id===id)||S.catalog.find(x=>x.id===id)||(S.selectedItem?.id===id?S.selectedItem:null)||S.overview?.latest?.find(x=>x.id===id);
  try{
+  if(action==='reload-lists'){await refresh();return;}
+  if(action==='page'){
+    const section=el.dataset.section,page=Number(el.dataset.page),before=S.pages[section];
+    if(before===undefined||!Number.isInteger(page)||page<0||page>=Math.max(1,Math.ceil(S.totals[section]/PAGE_SIZE)))return;
+    el.disabled=true;
+    try{if(await reloadData({pages:{...S.pages,[section]:page},clearSelection:section==='publish'})){render();document.querySelector(`nav[aria-label="${section} pages"] [role="status"]`)?.focus({preventScroll:true});}}finally{el.disabled=false;}
+    return;
+  }
+  if(id&&!item&&['edit','duplicate','prepare','kit','delist','sold','ready','mark-removed','make-cover'].includes(action))item=await api(`/api/items/${id}`);
   if(action==='close'||(action==='dismiss'&&e.target===el)){S.pendingImport=null;S.pendingRestore=null;closeModal();return;}
   if(action==='register'||action==='login'){authModal(action);return;}
   if(action==='forgot-password'){forgotPasswordModal();return;}
-  if(action==='logout'){await api('/api/auth/logout',{method:'POST'});S.session=await api('/api/session');authLanding();return;}
+  if(action==='logout'){await api('/api/auth/logout',{method:'POST'});S.session=await api('/api/session');resetLists();authLanding();return;}
   if(action==='new'){itemEditor();return;}
   if(action==='edit'){itemEditor(item);return;}
   if(action==='duplicate'){
     if(!item)throw Error('Item unavailable');
     if(!confirm('Create a fresh draft from this item? Photos, published links and sales will not be copied.'))return;
     const copy=await api(`/api/items/${id}/duplicate`,{method:'POST'});
-    await reloadData();nav('inventory');toast('Draft copied. Add original photos and verify garment facts before publishing.');
-    itemEditor(S.catalog.find(x=>x.id===copy.id));return;
+    S.pages.inventory=0;S.filter='all';S.q='';await reloadData();nav('inventory');toast('Draft copied. Add original photos and verify garment facts before publishing.');
+    itemEditor(copy.item);return;
   }
-  if(action==='prepare'){S.activeId=id;nav('publish');return;}
+  if(action==='prepare'){S.activeId=id;S.selectedItem=item;nav('publish');return;}
   if(action==='kit'){kitModal(item,channel);return;}
   if(action==='delist'){delistModal(item);return;}
   if(action==='sold'){soldModal(item);return;}
@@ -260,12 +306,14 @@ async function handleAction(el,e){
     }finally{el.disabled=false;}return;
   }
   if(action==='make-cover'){
-    const current=S.catalog.find(x=>x.id===id);
+    const current=item;
     if(!current)throw Error('Item not available.');
     const chosen=Number(el.dataset.photo);
     const ordered=[chosen,...current.photos.map(x=>x.id).filter(x=>x!==chosen)];
     const result=await api(`/api/items/${id}/photos/order`,{method:'PUT',body:{photo_ids:ordered}});
     S.catalog=S.catalog.map(x=>x.id===id?result.item:x);
+    S.items=S.items.map(x=>x.id===id?result.item:x);
+    if(S.selectedItem?.id===id)S.selectedItem=result.item;
     if($('#editor-gallery'))$('#editor-gallery').innerHTML=galleryHtml(result.item);
     toast('Cover photo changed.');return;
   }
@@ -273,7 +321,7 @@ async function handleAction(el,e){
     if(!confirm('Remove this photo from Dope Stuff? This does not affect external marketplaces.'))return;
     const result=await api(`/api/items/${id}/photos/${Number(el.dataset.photo)}`,{method:'DELETE'});
     await reloadData();
-    const updated=S.catalog.find(x=>x.id===id);
+    const updated=result.item;
     if($('#editor-gallery'))$('#editor-gallery').innerHTML=galleryHtml(updated);
     const hint=$('.modal .form-block .hint');if(hint)hint.textContent=`Saved photos: ${updated?.photo_count||0} of 8. You can add more before saving changes.`;
     toast(result.photo_cleanup_pending?'Photo removed from your inventory. Private storage cleanup is queued for retry.':'Photo removed from Dope Stuff.');return;
@@ -317,10 +365,10 @@ document.addEventListener('submit',async e=>{
     S.session=await api('/api/session');closeModal();toast('Password updated. All other sessions were revoked.');
   }else if(form.id==='delete-account-form'){
     const response=await api('/api/account/delete',{method:'POST',body:{confirmation:String(f.get('confirmation')),password:String(f.get('password'))}});
-    closeModal();S.session=await api('/api/session');S.items=[];S.catalog=[];S.sales=[];authLanding();toast(response.notice);location.hash='';
+    closeModal();S.session=await api('/api/session');resetLists();authLanding();toast(response.notice);location.hash='';
   }else if(form.id==='auth-form'){
     const body={email:String(f.get('email')),password:String(f.get('password'))};if(form.dataset.mode==='register'){body.name=String(f.get('name'));body.invite_code=String(f.get('invite_code')||'');}
-    await api(`/api/auth/${form.dataset.mode}`,{method:'POST',body});S.session=await api('/api/session');await reloadData();closeModal();nav('overview');toast('Your workspace is ready.');
+    await api(`/api/auth/${form.dataset.mode}`,{method:'POST',body});S.session=await api('/api/session');resetLists();await reloadData();closeModal();nav('overview');toast('Your workspace is ready.');
   } else if(form.id==='item-form') await itemFormSubmit(form);
   else if(form.id==='sale-form'){
     const id=Number(form.dataset.id);const cents=k=>Math.round(Number(f.get(k)||0)*100);
@@ -357,16 +405,21 @@ document.addEventListener('submit',async e=>{
  }catch(err){toast(err.message,true);}finally{if(btn)btn.disabled=false;}
 });
 document.addEventListener('change',e=>{
- if(e.target.id==='publish-item'){S.activeId=Number(e.target.value||0);render();}
+ if(e.target.id==='publish-item'){S.activeId=Number(e.target.value||0);S.selectedItem=S.catalog.find(item=>item.id===S.activeId)||null;render();}
  if(e.target.id==='restore-file'){S.pendingRestore=null;const result=$('#restore-results');if(result)result.innerHTML='';}
  if(e.target.id==='inventory-csv'){S.pendingImport=null;const result=$('#import-results');if(result)result.innerHTML='';}
 });
 let searchTimeout;
 document.addEventListener('input',e=>{
- if(e.target.id==='inventory-search'){const q=e.target.value;clearTimeout(searchTimeout);searchTimeout=setTimeout(async()=>{S.q=q;try{await reloadData();if(S.nav==='inventory'){$('#screen').innerHTML=inventoryView();$('#inventory-search')?.focus();$('#inventory-search')?.setSelectionRange(q.length,q.length);}}catch(err){toast(err.message,true);}},280);}
+ if(['inventory-search','publish-search'].includes(e.target.id)){
+  const field=e.target.id,q=e.target.value,section=field==='inventory-search'?'inventory':'publish';
+  clearTimeout(searchTimeout);reloadGeneration++;S.pages[section]=0;
+  if(section==='inventory')S.q=q;else{S.publishQ=q;S.activeId=null;S.selectedItem=null;}
+  searchTimeout=setTimeout(async()=>{try{if(await reloadData()&&S.nav===section){$('#screen').innerHTML=section==='inventory'?inventoryView():publishView();$('#'+field)?.focus();$('#'+field)?.setSelectionRange(q.length,q.length);}}catch(err){toast(err.message,true);}},280);
+ }
 });
 document.addEventListener('click',async e=>{
- const filter=e.target.closest('[data-filter]');if(filter){S.filter=filter.dataset.filter;try{await refresh();}catch(err){toast(err.message,true);}}
+ const filter=e.target.closest('[data-filter]');if(filter){S.filter=filter.dataset.filter;S.pages.inventory=0;try{await refresh();}catch(err){toast(err.message,true);}}
 });
 document.addEventListener('keydown',e=>{
  if(e.key==='Escape'){closeModal();return;}

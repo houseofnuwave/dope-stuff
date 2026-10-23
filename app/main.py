@@ -706,19 +706,29 @@ def overview(user=Depends(current_user)):
         latest=db.execute("SELECT * FROM items WHERE user_id=? AND status!='archived' ORDER BY updated_at DESC,id DESC LIMIT 6",(user['id'],)).fetchall()
         return {"stats":dict(stats),"finance":dict(finance),"action_required":attention,"latest":[serialize_item(db,r) for r in latest]}
 
+def begin_list_snapshot(connection):
+    # Counts and rows in a page must describe the same database state, even if
+    # another request records a sale or clears a task between the two queries.
+    connection.execute('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY'
+                       if postgres_enabled() else 'BEGIN')
+
+
 @app.get("/api/actions")
-def manual_actions(user=Depends(current_user)):
+def manual_actions(limit:int=200,offset:int=0,user=Depends(current_user)):
     """Seller-confirmed live channels pending *manual* delisting after sale.
     No external marketplace is contacted or changed.
     """
+    limit = max(1,min(limit,200)); offset=max(0,offset)
     with connect() as db:
+        begin_list_snapshot(db)
         total = db.execute("""SELECT COUNT(*) FROM item_channels c JOIN items i ON i.id=c.item_id
             WHERE i.user_id=? AND c.status='delist_required'""",(user['id'],)).fetchone()[0]
         rows = db.execute("""SELECT c.channel,c.listing_url,c.updated_at,i.id item_id,
             i.title,i.sku FROM item_channels c JOIN items i ON i.id=c.item_id
             WHERE i.user_id=? AND c.status='delist_required'
-            ORDER BY c.updated_at ASC,i.id ASC,c.channel ASC LIMIT 200""",(user['id'],)).fetchall()
+            ORDER BY c.updated_at ASC,i.id ASC,c.channel ASC LIMIT ? OFFSET ?""",(user['id'],limit,offset)).fetchall()
     return {'total':total,'actions':[{**dict(r),'display_name':CHANNELS[r['channel']]['name']} for r in rows],
+            'limit':limit,'offset':offset,'has_more':offset+len(rows)<total,
             'notice':'Manual seller checklist only. Dope Stuff has not removed or verified any external listing.'}
 
 @app.get("/api/insights")
@@ -760,9 +770,11 @@ def list_items(q:str="",status:str="all",limit:int=80,offset:int=0,user=Depends(
         args.extend([search]*3)
     where=" AND ".join(conditions)
     with connect() as db:
+        begin_list_snapshot(db)
         rows=db.execute(f"SELECT * FROM items WHERE {where} ORDER BY updated_at DESC,id DESC LIMIT ? OFFSET ?",args+[limit,offset]).fetchall()
         total=db.execute(f"SELECT COUNT(*) FROM items WHERE {where}",args).fetchone()[0]
-        return {"items":[serialize_item(db,r) for r in rows],"total":total}
+        return {"items":[serialize_item(db,r) for r in rows],"total":total,
+                "limit":limit,"offset":offset,"has_more":offset+len(rows)<total}
 
 @app.get("/api/items/{item_id}")
 def get_item(item_id:int,user=Depends(current_user)):
@@ -1036,11 +1048,15 @@ def mark_sold(item_id:int,p:SaleInput,user=Depends(csrf)):
             "notice":"Sale recorded locally. No external marketplace listing was automatically removed."}
 
 @app.get("/api/sales")
-def sales(user=Depends(current_user)):
+def sales(limit:int=500,offset:int=0,user=Depends(current_user)):
+    limit = max(1,min(limit,500)); offset=max(0,offset)
     with connect() as db:
+        begin_list_snapshot(db)
+        total=db.execute('SELECT COUNT(*) FROM sales WHERE user_id=?',(user['id'],)).fetchone()[0]
         rows=db.execute("""SELECT s.*,i.title,i.brand,i.sku FROM sales s JOIN items i ON i.id=s.item_id
-             WHERE s.user_id=? ORDER BY s.created_at DESC,s.id DESC LIMIT 500""",(user['id'],)).fetchall()
-    return {"sales":[dict(x) for x in rows]}
+             WHERE s.user_id=? ORDER BY s.created_at DESC,s.id DESC LIMIT ? OFFSET ?""",(user['id'],limit,offset)).fetchall()
+    return {"sales":[dict(x) for x in rows],"total":total,"limit":limit,
+            "offset":offset,"has_more":offset+len(rows)<total}
 
 
 def protect_excel(value):

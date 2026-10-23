@@ -61,6 +61,10 @@ def main():
         from tools.state_race_checks import assert_publish_sale_integrity, assert_double_sale_integrity
         assert_publish_sale_integrity(client, token, item)
         assert_double_sale_integrity(client, token, item)
+        from tools.pagination_checks import assert_pagination_boundaries, assert_live_count_snapshot
+        assert_pagination_boundaries(client)
+        for kind in ('actions', 'sales'):
+            assert_live_count_snapshot(client, kind)
         # Exercise the real PostgreSQL transaction with private S3 unavailable
         # during deletion, then recover against the same real object store.
         with patch.object(photo_storage, 'delete_photo', side_effect=OSError('test outage')):
