@@ -61,3 +61,13 @@
 
 /* v1.0: six genuine mobile routes, no hidden Sales or Action Center. */
 @media(max-width:850px){.mobile-nav{gap:1px}.mobile-nav button{flex:1;min-width:0;padding:4px 2px;overflow:hidden;font-size:9px;white-space:nowrap}}
+
+/* V2 inventory aging: full-account seller decision support */
+.aging-card{margin:0 0 18px}
+.aging-buckets{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-top:18px}
+.aging-bin{padding:14px;border:1px solid var(--line);border-radius:12px;background:var(--surface2);min-width:0}
+.aging-bin .strong{font-size:19px;margin:5px 0}
+.aging-item{gap:14px}
+.aging-item .btn{flex-shrink:0}
+@media(max-width:850px){.aging-buckets{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:380px){.aging-buckets{grid-template-columns:1fr}.aging-item{align-items:start}}

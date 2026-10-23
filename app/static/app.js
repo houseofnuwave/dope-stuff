@@ -35,7 +35,7 @@ const icons={
 };
 const icon=(name,size=18)=>`<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${icons[name]||icons.box}</svg>`;
 const PAGE_SIZE=50;
-const S={session:null,items:[],overview:null,sales:[],channels:{},nav:'overview',filter:'all',q:'',catalog:[],activeId:null,selectedItem:null,publishQ:'',pages:{inventory:0,publish:0,actions:0,sales:0},totals:{inventory:0,publish:0,actions:0,sales:0},pendingImport:null,pendingRestore:null,insights:null,actions:[]};
+const S={session:null,items:[],overview:null,sales:[],channels:{},nav:'overview',filter:'all',q:'',catalog:[],activeId:null,selectedItem:null,publishQ:'',pages:{inventory:0,publish:0,actions:0,sales:0},totals:{inventory:0,publish:0,actions:0,sales:0},pendingImport:null,pendingRestore:null,insights:null,actions:[],aging:null};
 let reloadGeneration=0;
 const APP=$('#app');
 const toast=(msg,error=false)=>{const el=document.createElement('div');el.className='toast'+(error?' error':'');el.textContent=msg;$('#toast-root').append(el);setTimeout(()=>el.remove(),4500);};
@@ -70,7 +70,7 @@ function backupLimitsLabel(){
 function resetLists(){
  clearTimeout(searchTimeout);
  reloadGeneration++;S.pages={inventory:0,publish:0,actions:0,sales:0};S.totals={inventory:0,publish:0,actions:0,sales:0};
- S.items=[];S.catalog=[];S.sales=[];S.actions=[];S.overview=null;S.insights=null;
+ S.items=[];S.catalog=[];S.sales=[];S.actions=[];S.overview=null;S.insights=null;S.aging=null;
  S.activeId=null;S.selectedItem=null;S.q='';S.publishQ='';S.filter='all';
 }
 function authLanding(){
@@ -95,6 +95,18 @@ function recentTable(items,full=false){
  if(!items.length)return empty('box','No listings yet','Create your first item to begin organizing your resale business.',`<button class="btn" data-action="new">${icon('plus')} New listing</button>`);
  return `<div class="table-scroll desktop-item-table"><table class="data-table"><thead><tr><th>Item</th><th>Price</th><th>Status</th><th>Channels</th><th>Actions</th></tr></thead><tbody>${items.map(it=>`<tr><td>${itemLine(it)}</td><td><span class="strong">${money(it.price_cents)}</span><div class="tiny muted">Cost ${money(it.cost_cents)}</div></td><td>${statusPill(it.status)}</td><td><div class="tiny strong">${countLive(it)} reported live</div>${countAction(it)?'<span class="pill red">'+countAction(it)+' delist now</span>':'<div class="tiny muted">'+Object.values(it.channels).filter(c=>c.status==='ready').length+' ready</div>'}</td><td><div class="action-dots"><button class="btn small secondary" data-action="prepare" data-id="${it.id}">Prepare</button>${it.status==='sold'?`<button class="btn small pale" data-action="delist" data-id="${it.id}">Review</button><button class="btn small secondary" data-action="duplicate" data-id="${it.id}">Duplicate</button>`:`<button class="btn small pale" data-action="sold" data-id="${it.id}">Sold</button><button class="btn small secondary" data-action="edit" data-id="${it.id}">${icon('edit',14)}</button><button class="btn small pale" data-action="duplicate" data-id="${it.id}" title="Duplicate this listing as a fresh draft">Duplicate</button><button class="icon-btn" aria-label="Archive item" title="Archive item" data-action="archive" data-id="${it.id}">${icon('close',14)}</button>`}</div></td></tr>`).join('')}</tbody></table></div><div class="mobile-item-list">${items.map(it=>`<div class="mobile-item"><div class="between">${itemLine(it)}<b class="small">${money(it.price_cents)}</b></div><div class="between" style="margin:12px 0">${statusPill(it.status)}<span class="tiny muted">${countLive(it)} live · ${countAction(it)} delist tasks</span></div><div class="row wrap"><button class="btn small secondary" data-action="prepare" data-id="${it.id}">Prepare</button>${it.status==='sold'?`<button class="btn small pale" data-action="delist" data-id="${it.id}">Review</button><button class="btn small secondary" data-action="duplicate" data-id="${it.id}">Duplicate</button>`:`<button class="btn small pale" data-action="sold" data-id="${it.id}">Mark sold</button><button class="btn small secondary" data-action="edit" data-id="${it.id}">Edit</button><button class="btn small pale" data-action="duplicate" data-id="${it.id}">Duplicate</button><button class="icon-btn" title="Archive" aria-label="Archive item" data-action="archive" data-id="${it.id}">${icon('close',14)}</button>`}</div></div>`).join('')}</div>`;
 }
+
+function inventoryAgingCard(){
+ const r=S.aging;
+ if(!r)return '';
+ const bins=r.buckets.map(b=>`<div class="aging-bin"><div class="tiny muted">${escapeHtml(b.label)} · Added in Dope Stuff</div><div class="strong">${Number(b.count).toLocaleString('en-US')} items</div><div class="small muted">${money(b.cost_cents)} recorded cost</div></div>`).join('');
+ const oldest=r.oldest.map(x=>`<div class="seller-check aging-item"><div style="flex:1;min-width:0"><b class="small">${escapeHtml(x.title)}</b><div class="tiny muted">SKU ${escapeHtml(x.sku)} · Added ${escapeHtml(x.created_at.slice(0,10))}</div></div><button class="btn secondary small" data-action="edit" data-id="${Number(x.id)}">Review item</button></div>`).join('');
+ return `<section class="card card-pad aging-card" aria-label="Inventory age"><div class="between wrap"><div><div class="eyebrow">V2 / SELLER DECISION TOOLS</div><h3 style="margin:10px 0 4px">Inventory aging</h3><p class="small muted" style="margin:0">Based on when items were entered into Dope Stuff, not when originally acquired or listed elsewhere.</p></div><div><b>${Number(r.aging_30_plus_count)} older items</b><div class="tiny muted">${money(r.aging_30_plus_cost_cents)} recorded purchase costs</div></div></div>
+ <div class="aging-buckets">${bins}</div>
+ ${oldest?`<h4 style="margin:16px 0 8px">Oldest records to revisit</h4>${oldest}`:'<p class="small muted" style="margin:12px 0 0">Nothing older than 30 days in your unsold inventory.</p>'}
+ <p class="fineprint" style="margin:14px 0 0">Imports start aging on import date. These counts are not proof of external listing age or marketplace demand. Costs are seller-entered and may be missing. Reviewing an item never changes external listings.</p></section>`;
+}
+
 function overviewView(){
  const o=S.overview||{stats:{inventory:0,available:0,active:0,inventory_value:0},finance:{gross:0,profit:0,sales:0},action_required:0,latest:[]};
  const stats=[["Inventory",o.stats.inventory,'Items in your catalog'],['Reported live',o.stats.active,'Seller-confirmed only'],['Gross sales',money(o.finance.gross),'Manually recorded'],['Net profit',money(o.finance.profit),'After costs + fees']];
@@ -102,6 +114,7 @@ function overviewView(){
  ${!o.stats.inventory?`<div class="notice welcome-card"><div><div class="eyebrow">YOUR FIRST 10 PIECES</div><h3>Start with what you already own.</h3><p class="small">Add your first item with up to 8 photos, or review a spreadsheet before importing your inventory. Nothing is posted to marketplaces automatically.</p></div><div class="row wrap"><button class="btn" data-action="new">${icon('plus')} Add first item</button><button class="btn secondary" data-action="import">${icon('upload')} Import inventory</button></div></div>`:''}
  ${o.action_required?`<div class="alert between wrap"><div>${icon('alert')} <b>${o.action_required} live listing(s) need manual removal.</b> This software has not removed them from marketplaces.</div><button class="btn small secondary" data-nav="actions">Review removal tasks</button></div>`:''}
  <div class="stats">${stats.map(([label,value,foot])=>`<div class="card metric"><div class="metric-label">${label}</div><div class="value">${value}</div><div class="metric-foot">${foot}</div></div>`).join('')}</div>
+ ${inventoryAgingCard()}
  <div class="two-col"><div class="card"><div class="between" style="padding:22px 22px 12px"><div><h3 style="margin-bottom:3px">Recent inventory</h3><div class="small muted">Your latest saved pieces</div></div><button class="link small" data-nav="inventory">View all ${icon('arrow',13)}</button></div>${recentTable(o.latest)}</div><div class="stack"><div class="card card-pad"><div class="eyebrow">NEXT BEST ACTION</div><h3 style="margin:15px 0 10px">Prepare your next listing.</h3><p class="small">Create a consistent product record once, then copy tailored details to the platforms you choose.</p><button class="btn full" data-action="new">Create listing ${icon('arrow')}</button></div><div class="card card-pad"><h3>Inventory value</h3><div class="serif" style="font-size:39px">${money(o.stats.inventory_value)}</div><p class="tiny muted">Asking prices for unsold items. This is not cash or realized revenue.</p><div class="divider"></div><div class="feature-row">${icon('shield')}<div><b class="small">No false synchronization</b><div class="tiny muted">Every channel status reflects your confirmation, not an API connection.</div></div></div></div></div></div>`;
 }
 function inventoryView(){
@@ -163,15 +176,15 @@ async function fetchListPage(path,key,page){
 async function reloadData(options={}){
  if(!S.session?.authenticated)return false;
  const generation=++reloadGeneration,owner=S.session.user.id,pages={...(options.pages||S.pages)},activeId=options.clearSelection?null:S.activeId;
- const [a,b,c,d,e,f,g]=await Promise.all([api('/api/overview'),
+ const [a,b,c,d,e,f,g,h]=await Promise.all([api('/api/overview'),
   fetchListPage(`/api/items?status=${encodeURIComponent(S.filter)}&q=${encodeURIComponent(S.q)}`,'items',pages.inventory),
   api('/api/channels'),fetchListPage('/api/sales','sales',pages.sales),
   fetchListPage(`/api/items?status=all&q=${encodeURIComponent(S.publishQ)}`,'items',pages.publish),
-  api('/api/insights'),fetchListPage('/api/actions','actions',pages.actions)]);
+  api('/api/insights'),fetchListPage('/api/actions','actions',pages.actions),api('/api/inventory-aging')]);
  let selected=e.rows.find(item=>item.id===activeId)||b.rows.find(item=>item.id===activeId)||null;
  if(activeId&&!selected){try{selected=await api(`/api/items/${activeId}`);}catch(error){if(error.status!==404)throw error;}}
  if(generation!==reloadGeneration||!S.session?.authenticated||S.session.user.id!==owner)return false;
- S.overview=a;S.items=b.rows;S.channels=c.channels;S.sales=d.rows;S.catalog=e.rows;S.insights=f;S.actions=g.rows;S.selectedItem=selected;
+ S.overview=a;S.items=b.rows;S.channels=c.channels;S.sales=d.rows;S.catalog=e.rows;S.insights=f;S.actions=g.rows;S.aging=h;S.selectedItem=selected;
  if(options.clearSelection)S.activeId=null;
  for(const [section,data] of Object.entries({inventory:b,sales:d,publish:e,actions:g})){S.pages[section]=data.page;S.totals[section]=data.total;}
  return true;

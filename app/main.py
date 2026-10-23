@@ -21,6 +21,7 @@ import secrets
 import sqlite3
 import time
 from contextlib import asynccontextmanager, suppress
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlparse
 from starlette.middleware.trustedhost import TrustedHostMiddleware
@@ -788,6 +789,52 @@ def manual_actions(limit:int=200,offset:int=0,user=Depends(current_user)):
     return {'total':total,'actions':[{**dict(r),'display_name':CHANNELS[r['channel']]['name']} for r in rows],
             'limit':limit,'offset':offset,'has_more':offset+len(rows)<total,
             'notice':'Manual seller checklist only. Dope Stuff has not removed or verified any external listing.'}
+
+@app.get("/api/inventory-aging")
+def inventory_aging(user=Depends(current_user)):
+    """Read-only seller inventory age and seller-recorded acquisition costs.
+
+    Clock starts when an item is entered/imported into Dope Stuff, NOT when
+    acquired, first listed on a marketplace or last repriced. All bins and
+    oldest records come from one owner-scoped database snapshot.
+    """
+    now = datetime.now(timezone.utc)
+    thresholds = [(now - timedelta(days=days)).strftime('%Y-%m-%d %H:%M:%S')
+                  for days in (30, 60, 90)]
+    cutoff30, cutoff60, cutoff90 = thresholds
+    with connect() as connection:
+        begin_list_snapshot(connection)
+        aggregates = connection.execute("""SELECT COUNT(*) AS total,
+            COALESCE(SUM(cost_cents),0) AS total_cost,
+            COALESCE(SUM(CASE WHEN created_at < ? THEN 1 ELSE 0 END),0) AS count30,
+            COALESCE(SUM(CASE WHEN created_at < ? THEN cost_cents ELSE 0 END),0) AS cost30,
+            COALESCE(SUM(CASE WHEN created_at < ? THEN 1 ELSE 0 END),0) AS count60,
+            COALESCE(SUM(CASE WHEN created_at < ? THEN cost_cents ELSE 0 END),0) AS cost60,
+            COALESCE(SUM(CASE WHEN created_at < ? THEN 1 ELSE 0 END),0) AS count90,
+            COALESCE(SUM(CASE WHEN created_at < ? THEN cost_cents ELSE 0 END),0) AS cost90
+            FROM items WHERE user_id=? AND status IN ('draft','active')""",
+            (cutoff30,cutoff30,cutoff60,cutoff60,cutoff90,cutoff90,user['id'])).fetchone()
+        oldest = connection.execute("""SELECT id,title,sku,status,cost_cents,created_at
+            FROM items WHERE user_id=? AND status IN ('draft','active')
+                AND created_at < ?
+            ORDER BY created_at ASC,id ASC LIMIT 5""",
+            (user['id'], cutoff30)).fetchall()
+    a=dict(aggregates)
+    buckets=[
+        {'label':'Under 30 days','min_days':0,'max_days':29,
+         'count':a['total']-a['count30'],'cost_cents':a['total_cost']-a['cost30']},
+        {'label':'30–59 days','min_days':30,'max_days':59,
+         'count':a['count30']-a['count60'],'cost_cents':a['cost30']-a['cost60']},
+        {'label':'60–89 days','min_days':60,'max_days':89,
+         'count':a['count60']-a['count90'],'cost_cents':a['cost60']-a['cost90']},
+        {'label':'90+ days','min_days':90,'max_days':None,
+         'count':a['count90'],'cost_cents':a['cost90']},
+    ]
+    return {'available_count':a['total'],'recorded_cost_cents':a['total_cost'],
+            'aging_30_plus_count':a['count30'],'aging_30_plus_cost_cents':a['cost30'],
+            'buckets':buckets,'oldest':[dict(row) for row in oldest],
+            'notice':'Age is time since entry into Dope Stuff (including imports), not original acquisition or marketplace listing age. Costs are seller-entered and may be missing. No external listings were checked or changed.'}
+
 
 @app.get("/api/insights")
 def insights(user=Depends(current_user)):
