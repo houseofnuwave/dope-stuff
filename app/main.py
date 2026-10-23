@@ -290,8 +290,12 @@ def csrf(request: Request, user=Depends(current_user)):
     return user
 
 
-def user_item(db, uid:int, item_id:int):
-    item = db.execute("SELECT * FROM items WHERE id=? AND user_id=?",(item_id,uid)).fetchone()
+def user_item(db, uid:int, item_id:int, *, for_update=False):
+    # Mutation callers must begin a transaction before requesting a row lock.
+    # SQLite BEGIN IMMEDIATE already serializes writers; PostgreSQL needs an
+    # explicit row lock so precondition checks cannot use stale item state.
+    suffix = ' FOR UPDATE' if for_update and postgres_enabled() else ''
+    item = db.execute("SELECT * FROM items WHERE id=? AND user_id=?" + suffix,(item_id,uid)).fetchone()
     if not item: raise HTTPException(404,"Item not found")
     return rowdict(item)
 
@@ -791,23 +795,28 @@ def duplicate_item(item_id: int, user=Depends(csrf)):
 @app.put("/api/items/{item_id}")
 def edit_item(item_id:int,p:ItemInput,user=Depends(csrf)):
     with connect() as db:
-        item=user_item(db,user['id'],item_id)
+        db.execute('BEGIN IMMEDIATE')
+        item=user_item(db,user['id'],item_id,for_update=True)
         if item['status']=='sold': raise HTTPException(409,"Sold items are locked; make accounting corrections outside this MVP")
         fields=p.model_dump()
         if not fields['sku']: fields['sku']=item['sku']
         try:
             db.execute("UPDATE items SET "+",".join(f"{x}=?" for x in fields)+",updated_at=datetime('now') WHERE id=?",list(fields.values())+[item_id])
         except sqlite3.IntegrityError: raise HTTPException(409,"SKU already used in your inventory")
-        return serialize_item(db,user_item(db,user['id'],item_id))
+        result = serialize_item(db,user_item(db,user['id'],item_id))
+        db.execute('COMMIT')
+        return result
 
 @app.delete("/api/items/{item_id}")
 def archive_item(item_id:int,user=Depends(csrf)):
     with connect() as db:
-        item=user_item(db,user['id'],item_id)
+        db.execute('BEGIN IMMEDIATE')
+        item=user_item(db,user['id'],item_id,for_update=True)
         if item['status']=='sold': raise HTTPException(409,"Sold items cannot be archived")
         live=db.execute("SELECT COUNT(*) FROM item_channels WHERE item_id=? AND status='manually_published'",(item_id,)).fetchone()[0]
         if live: raise HTTPException(409,"Remove all published listings before archiving")
         db.execute("UPDATE items SET status='archived',updated_at=datetime('now') WHERE id=?",(item_id,))
+        db.execute('COMMIT')
     return {"ok":True,"message":"Archived. Not removed from external marketplaces."}
 
 MAX_ITEM_PHOTOS = 8
@@ -857,7 +866,7 @@ async def upload_photos(item_id: int, photos: list[UploadFile] = File(...), user
             filenames.append(name)
         with connect() as db:
             db.execute("BEGIN IMMEDIATE")
-            item = user_item(db, user['id'], item_id)
+            item = user_item(db, user['id'], item_id, for_update=True)
             if item['status'] in ('sold','archived'):
                 raise HTTPException(409, "Cannot change photos on sold or archived items")
             count = db.execute("SELECT COUNT(*) FROM item_photos WHERE item_id=?", (item_id,)).fetchone()[0]
@@ -907,7 +916,7 @@ def get_gallery_photo(item_id:int,photo_id:int,user=Depends(current_user)):
 def delete_gallery_photo(item_id:int,photo_id:int,response:Response,user=Depends(csrf)):
     with connect() as db:
         db.execute("BEGIN IMMEDIATE")
-        item=user_item(db,user['id'],item_id)
+        item=user_item(db,user['id'],item_id,for_update=True)
         if item['status'] in ('sold','archived'):
             raise HTTPException(409,"Cannot change photos on sold or archived items")
         photo=db.execute("SELECT file_path FROM item_photos WHERE id=? AND item_id=?",(photo_id,item_id)).fetchone()
@@ -932,7 +941,7 @@ def reorder_gallery(item_id: int, p: ReorderPhotosInput, user=Depends(csrf)):
         raise HTTPException(422, "Each photograph may appear once")
     with connect() as db:
         db.execute("BEGIN IMMEDIATE")
-        item = user_item(db, user['id'], item_id)
+        item = user_item(db, user['id'], item_id, for_update=True)
         if item['status'] in ('sold', 'archived'):
             raise HTTPException(409, "Cannot change photos on sold or archived items")
         rows = db.execute("SELECT id,file_path FROM item_photos WHERE item_id=? ORDER BY position,id", (item_id,)).fetchall()
@@ -961,7 +970,8 @@ def update_channel(item_id:int,channel:str,p:ChannelInput,user=Depends(csrf)):
     if channel not in CHANNELS: raise HTTPException(404,"Unknown marketplace")
     validate_listing_url(channel,p.listing_url)
     with connect() as db:
-        item=user_item(db,user['id'],item_id)
+        db.execute('BEGIN IMMEDIATE')
+        item=user_item(db,user['id'],item_id,for_update=True)
         if item['status']=='archived': raise HTTPException(409,"Archived item")
         if item['status']=='sold' and p.status in ('ready','manually_published'):
             raise HTTPException(409,"Cannot publish a sold item")
@@ -975,7 +985,9 @@ def update_channel(item_id:int,channel:str,p:ChannelInput,user=Depends(csrf)):
             still_live = db.execute("SELECT 1 FROM item_channels WHERE item_id=? AND status='manually_published' LIMIT 1",(item_id,)).fetchone()
             if not still_live:
                 db.execute("UPDATE items SET status='draft',updated_at=datetime('now') WHERE id=?",(item_id,))
-        return serialize_item(db,user_item(db,user['id'],item_id))
+        result = serialize_item(db,user_item(db,user['id'],item_id))
+        db.execute('COMMIT')
+        return result
 
 
 def kit(item,channel,photos=0):
@@ -1007,7 +1019,7 @@ def mark_sold(item_id:int,p:SaleInput,user=Depends(csrf)):
     if p.channel not in CHANNELS and p.channel!='other': raise HTTPException(422,"Invalid channel")
     with connect() as db:
         db.execute("BEGIN IMMEDIATE")
-        item=user_item(db,user['id'],item_id)
+        item=user_item(db,user['id'],item_id,for_update=True)
         if item['status'] in ('sold','archived'): raise HTTPException(409,"Item is already sold or archived")
         if item['quantity'] != 1: raise HTTPException(409,"Multi-quantity sales need a separate inventory model. Set quantity to 1 for pilot sales.")
         db.execute("INSERT INTO sales(item_id,user_id,channel,sold_cents,fee_cents,ship_cents,cost_cents) VALUES (?,?,?,?,?,?,?)",

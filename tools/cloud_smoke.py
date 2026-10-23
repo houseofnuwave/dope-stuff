@@ -58,6 +58,9 @@ def main():
         assert backup.status_code==200 and len(backup.content)>100
         listed=client.get('/api/items').json()
         assert listed['total']==1
+        from tools.state_race_checks import assert_publish_sale_integrity, assert_double_sale_integrity
+        assert_publish_sale_integrity(client, token, item)
+        assert_double_sale_integrity(client, token, item)
         # Exercise the real PostgreSQL transaction with private S3 unavailable
         # during deletion, then recover against the same real object store.
         with patch.object(photo_storage, 'delete_photo', side_effect=OSError('test outage')):
@@ -78,7 +81,7 @@ def main():
             pass
         else:
             raise AssertionError('Deleted account photo remains in object storage')
-    print('CLOUD SMOKE PASSED: Postgres, private S3, inventory, export, deletion outage and durable retry.')
+    print('CLOUD SMOKE PASSED: Postgres, private S3, inventory, export, concurrent sale/publication, deletion outage and retry.')
 
 
 if __name__=='__main__': main()
