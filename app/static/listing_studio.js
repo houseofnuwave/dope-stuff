@@ -115,25 +115,39 @@
     if (!parts.managed) return { details: d, hasSection: false };
     const lines = parts.managed.split(/\r?\n/).slice(1, -1);
     for (const line of lines) {
+      let recognized = false;
       if (line.startsWith('Garment type: ')) {
         const label = line.slice('Garment type: '.length);
         const found = Object.keys(GROUPS).find(k => GROUPS[k] === label);
-        if (found) d.group = found;
+        if (!found) throw new Error('The stored garment category was manually changed.');
+        d.group = found;
+        recognized = true;
+      } else if (line === 'Measurements (approximate, taken by seller):') {
+        recognized = true;
       } else if (line.startsWith('Fabric / materials: ')) {
         d.material = line.slice('Fabric / materials: '.length);
+        recognized = true;
       } else if (line.startsWith('Wear / flaws: ')) {
         d.wear = line.slice('Wear / flaws: '.length);
+        recognized = true;
       } else if (line.startsWith('Fit notes: ')) {
         d.fit = line.slice('Fit notes: '.length);
+        recognized = true;
+      } else {
+        for (const field of FIELDS) {
+          const prefix = field.label + ': ';
+          if (!line.startsWith(prefix)) continue;
+          const match = /^(\d+(?:\.\d{1,2})?) (cm|in)$/.exec(line.slice(prefix.length));
+          if (!match) break;
+          d.measurements[field.key] = match[1];
+          d.unit = match[2];
+          recognized = true;
+          break;
+        }
       }
-    }
-    for (const line of lines) {
-      for (const field of FIELDS) {
-        const prefix = field.label + ': ';
-        if (!line.startsWith(prefix)) continue;
-        const tail = line.slice(prefix.length);
-        const match = /^(\d+(?:\.\d{1,2})?) (cm|in)$/.exec(tail);
-        if (match) { d.measurements[field.key] = match[1]; d.unit = match[2]; }
+      // Never silently replace seller prose manually added within our block.
+      if (!recognized && line.trim()) {
+        throw new Error('The existing item details section has manual edits. Edit its text directly before regenerating.');
       }
     }
     return { details: d, hasSection: true };
