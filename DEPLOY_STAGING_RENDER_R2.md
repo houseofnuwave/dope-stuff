@@ -1,4 +1,4 @@
-# FORM v0.6 — Private hosted beta deployment
+# Dope Stuff v0.7 — private hosted beta deployment
 
 **Deployment status:** The repository is ready for owner-account configuration, but **no live deployment has been performed**. Do not put real seller data in a new deployment until all cloud integration, backup, access control, and account deletion checks have passed.
 
@@ -12,7 +12,7 @@
 
 ## What the owner must do (no passwords sent in chat)
 
-1. Create a **private GitHub repository** containing the source files in this package. Remove any local `.env`, `data/`, `__pycache__/`, or test-generated archives before uploading. The packaged ZIP already excludes local secrets and databases.
+1. Use the existing public source repository, https://github.com/houseofnuwave/dope-stuff. The repository's visibility is separate from access to seller accounts and private object storage. Keep all real environment settings, credentials, databases and customer files outside Git.
 2. In Cloudflare, create a dedicated private R2 bucket such as `form-private-beta`. **Do not enable public access** or attach a public custom domain. Issue a scoped R2 token with appropriate bucket object read/write/delete/list permissions. Keep the account ID, S3 endpoint, Access Key ID, and Secret Access Key in a password manager.
 3. In Render, connect that GitHub repository and select **New → Blueprint**. Render will detect `render.yaml`, creating the staging web service and PostgreSQL database. Review the cost before accepting the infrastructure.
 4. When prompted for secret variables, configure `FORM_S3_BUCKET`, `FORM_S3_ENDPOINT` (e.g. `https://<account-id>.r2.cloudflarestorage.com`), `FORM_S3_ACCESS_KEY_ID`, and `FORM_S3_SECRET_ACCESS_KEY`. Never commit or paste these values into chat. `FORM_SESSION_SECRET` and `FORM_PILOT_INVITE_CODE` are generated automatically by the Blueprint.
@@ -27,9 +27,9 @@
 
 For a custom domain later, set both `FORM_ALLOWED_HOSTS` (comma-separated exact hostnames) and `FORM_PUBLIC_ORIGIN` (matching HTTPS origin). FORM automatically also trusts Render's own exact hostname for health checks while running on Render staging. **Do not** use wildcard hosts or `http://` as a hosted public origin.
 
-## Cloud integration verification (not yet executed)
+## Cloud integration verification
 
-The repository includes a cloud integration test job that starts disposable PostgreSQL and MinIO services and runs `python -m tools.cloud_smoke`. It requires GitHub Actions and Docker access. The test script contains strict environment/database/bucket-prefix guards to avoid operating on real seller data. **A passing local SQLite test suite alone does not verify hosted PostgreSQL or R2.**
+The GitHub Actions cloud integration job passed on commit `74a9bad4c5ff9b90b00da06e720324453fb9c5f3`. It starts disposable PostgreSQL and builds a pinned upstream MinIO release, then runs `python -m tools.cloud_smoke`. The test script contains strict environment/database/bucket-prefix guards to avoid operating on real seller data. This verifies the cloud backend against isolated services; the actual Render/R2 environment still requires deployment verification.
 
 ## Disasters and limitations
 
