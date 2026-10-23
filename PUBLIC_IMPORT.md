@@ -14,6 +14,8 @@ Validation on Python 3.12:
 - Backend/tools byte compilation: passed.
 - Frontend JavaScript syntax: passed.
 - Local Chromium seller journey: blocked before browser launch by the macOS sandbox (`MachPortRendezvousServer: Permission denied`); no browser pass is claimed.
+- GitHub Linux runner subsequently passed all backend checks and both original desktop/mobile Chromium journeys on commit `ca4378ff80824d4a8489e2487b8512808433ec3c`.
+- Initial cloud CI failed while pulling the archive's unavailable `minio/minio:latest` image, before application tests. CI now builds the pinned upstream MinIO release `RELEASE.2025-10-15T17-29-55Z` from source and waits for readiness.
 - GitHub Actions runs backend checks, the preserved desktop/mobile Chromium journey, and isolated PostgreSQL/MinIO integration checks. Check the actual run status before claiming these passed remotely.
 
 No production deployment or live marketplace integration was performed. The archive contains no LICENSE; license choice is left to the repository owner, and public visibility alone grants no open-source license.
