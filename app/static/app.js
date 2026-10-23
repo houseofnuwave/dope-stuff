@@ -62,6 +62,11 @@ function pageControls(section){
  const start=total?page*PAGE_SIZE+1:0,end=Math.min((page+1)*PAGE_SIZE,total);
  return `<nav class="pagination row wrap between" aria-label="${section} pages"><button class="btn secondary small" data-action="page" data-section="${section}" data-page="${page-1}" ${page===0?'disabled':''}>Previous</button><span class="small muted" role="status" tabindex="-1" aria-live="polite">${start}–${end} of ${total} · Page ${page+1} of ${pages}</span><button class="btn secondary small" data-action="page" data-section="${section}" data-page="${page+1}" ${page+1>=pages?'disabled':''}>Next</button></nav>`;
 }
+function backupLimitsLabel(){
+ const limits=S.session?.backup_limits;
+ if(!limits)return 'Reload the workspace to see current backup limits.';
+ return `${limits.zip_bytes/(1024*1024)} MB ZIP / ${limits.expanded_bytes/(1024*1024)} MB expanded · up to ${limits.items.toLocaleString('en-US')} items and ${limits.photos.toLocaleString('en-US')} photos`;
+}
 function resetLists(){
  clearTimeout(searchTimeout);
  reloadGeneration++;S.pages={inventory:0,publish:0,actions:0,sales:0};S.totals={inventory:0,publish:0,actions:0,sales:0};
@@ -137,14 +142,14 @@ function plansView(){
 function feedbackView(){return `${head('Help shape Dope Stuff.','We want evidence from working resellers, not feature wishlists alone.')}
  <div class="card card-pad feedbackbox"><div class="eyebrow">PRODUCT RESEARCH</div><h3 style="margin:12px 0">What was difficult today?</h3><p class="small">Tell us about the real workflow you attempted, the marketplace involved, and how much time you expected to save.</p><form id="feedback-form"><div class="form-block"><label for="rating">Overall usefulness</label><select name="rating" id="rating"><option value="5">5 — Extremely useful</option><option value="4">4 — Useful</option><option value="3">3 — Somewhat useful</option><option value="2">2 — Limited value</option><option value="1">1 — Not useful</option></select></div><div class="form-block"><label for="feedback-text">Your feedback</label><textarea id="feedback-text" name="message" required minlength="5" placeholder="I was trying to ... and couldn't ..."></textarea></div><button class="btn">Submit feedback ${icon('arrow')}</button></form></div><div class="card card-pad feedbackbox" style="margin-top:18px"><h3>Three questions we are testing</h3><div class="seller-check">${icon('checkcircle')} Can sellers prepare a quality listing faster than they do today?</div><div class="seller-check">${icon('checkcircle')} Can sellers avoid forgetting to remove sold items?</div><div class="seller-check">${icon('checkcircle')} Will sellers pay for one clear inventory system?</div></div>`;}
 function accountView(){return `${head('Your account.','Own your catalog, keep a complete backup, and recover it when necessary.')}
- <div class="two-col"><div class="card card-pad"><div class="eyebrow">DATA PORTABILITY</div><h3 style="margin-top:12px">Your records. Always yours.</h3><p class="small">Download a private ZIP of your inventory, photos, sales, historical feedback, and self-reported marketplace statuses. Store it securely — it includes financial details and personal notes.</p><a class="btn" href="/api/account/export.zip" download>${icon('download')} Download full backup</a><p class="fineprint" style="margin-top:13px">This archive is not encrypted. Store it in a private location.</p></div>
- <div class="card card-pad"><div class="eyebrow">RECOVERY</div><h3 style="margin-top:12px">Restore your inventory.</h3><p class="small">Preview an original Dope Stuff backup, then restore it into a <strong>blank</strong> account using the same email. A restore never publishes or changes external listings.</p><button class="btn secondary" data-action="restore-account">Preview a backup ${icon('arrow',14)}</button><p class="fineprint" style="margin-top:13px">Pilot limit: 128 MB ZIP, 500 items. Existing records cannot be overwritten or merged.</p></div></div>
+ <div class="two-col"><div class="card card-pad"><div class="eyebrow">DATA PORTABILITY</div><h3 style="margin-top:12px">Your records. Always yours.</h3><p class="small">Download a private ZIP of your inventory, photos, sales, historical feedback, and self-reported marketplace statuses. Store it securely — it includes financial details and personal notes.</p><button class="btn" data-action="download-backup">${icon('download')} Download full backup</button><p class="fineprint" style="margin-top:13px">This archive is not encrypted. Store it in a private location. Incomplete backups are blocked before download. ${backupLimitsLabel()}.</p></div>
+ <div class="card card-pad"><div class="eyebrow">RECOVERY</div><h3 style="margin-top:12px">Restore your inventory.</h3><p class="small">Preview an original Dope Stuff backup, then restore it into a <strong>blank</strong> account using the same email. A restore never publishes or changes external listings.</p><button class="btn secondary" data-action="restore-account">Preview a backup ${icon('arrow',14)}</button><p class="fineprint" style="margin-top:13px">${backupLimitsLabel()}. Existing records cannot be overwritten or merged.</p></div></div>
  <div class="card card-pad" style="margin-top:18px"><div class="eyebrow">SECURITY</div><h3 style="margin-top:12px">Protect your workspace.</h3><p class="small">Change your password. Other signed-in sessions will be revoked; this browser remains signed in.</p><button class="btn secondary" data-action="change-password">Change password ${icon('shield',14)}</button></div>
  <div class="card card-pad" style="margin-top:18px"><div class="eyebrow">ACCOUNT CONTROL</div><h3 style="margin-top:12px">Delete your workspace.</h3><p class="small">Permanently remove your Dope Stuff account, local inventory, photographs and sales. Download your backup first. External marketplace listings remain unchanged.</p><button class="btn secondary" data-action="delete-account">Review account deletion</button></div>
  <div class="notice small" style="margin-top:20px">This is a local pilot, not a hosted cloud account. Export regularly. Confirm marketplace listings yourself after restoring older records.</div>`;}
 function passwordModal(){modal('Change your password',`<p class="small">Choose a new password with at least 12 characters. This will sign out other devices and protect your inventory.</p><form id="password-form" class="stack" style="margin-top:18px"><div class="form-block"><label for="pw-current">Current password</label><input id="pw-current" name="current_password" type="password" minlength="10" autocomplete="current-password" required></div><div class="form-block"><label for="pw-new">New password (12+ characters)</label><input id="pw-new" name="new_password" type="password" minlength="12" autocomplete="new-password" required></div><div class="row wrap"><button type="button" class="btn secondary" data-action="close">Cancel</button><button type="submit" class="btn">Update password ${icon('shield',14)}</button></div></form>`);}
 function restoreAccountModal(){S.pendingRestore=null;modal('Restore a Dope Stuff backup',`<div class="notice small">${icon('shield')} Restore only into a blank account with the same email as the archive. We check photos, statuses, sales, and the integrity of the archive before importing. External listings are never changed.</div>
- <form id="restore-form" class="stack" style="margin-top:18px"><div class="form-block"><label for="restore-file">Original Dope Stuff backup ZIP</label><input id="restore-file" name="file" type="file" accept=".zip,application/zip" required><div class="hint">Pilot limit: 128 MB ZIP, 500 items.</div></div><button class="btn secondary" type="submit">Inspect backup first ${icon('search',15)}</button><div id="restore-results" aria-live="polite"></div></form>`, '', false);}
+ <form id="restore-form" class="stack" style="margin-top:18px"><div class="form-block"><label for="restore-file">Original Dope Stuff backup ZIP</label><input id="restore-file" name="file" type="file" accept=".zip,application/zip" required><div class="hint">${backupLimitsLabel()}.</div></div><button class="btn secondary" type="submit">Inspect backup first ${icon('search',15)}</button><div id="restore-results" aria-live="polite"></div></form>`, '', false);}
 function deleteAccountModal(){modal('Permanently delete Dope Stuff account',`<div class="alert small">${icon('alert')} This action cannot be undone. Download your backup first. Any published marketplace listings stay live until you remove them yourself.</div>
  <form id="delete-account-form" style="margin-top:20px" class="stack"><div class="form-block"><label for="delete-confirm">Type DELETE MY ACCOUNT to confirm</label><input id="delete-confirm" name="confirmation" autocomplete="off" required pattern="DELETE MY ACCOUNT" placeholder="DELETE MY ACCOUNT"></div><div class="form-block"><label for="delete-password">Current password</label><input id="delete-password" type="password" name="password" autocomplete="current-password" required minlength="10"></div><button class="btn danger full" type="submit">Permanently delete my data</button></form>`, '', false);}
 function render(){if(!S.session?.authenticated){authLanding();return;}shell();let html={overview:overviewView,inventory:inventoryView,publish:publishView,sales:salesView,plans:plansView,feedback:feedbackView,account:accountView,actions:actionsView}[S.nav]?.()||overviewView();$('#screen').innerHTML=html;}
@@ -254,6 +259,20 @@ async function handleAction(el,e){
  const action=el.dataset.action;const id=Number(el.dataset.id||0),channel=el.dataset.channel;
  let item=S.items.find(x=>x.id===id)||S.catalog.find(x=>x.id===id)||(S.selectedItem?.id===id?S.selectedItem:null)||S.overview?.latest?.find(x=>x.id===id);
  try{
+  if(action==='download-backup'){
+    const owner=S.session?.user?.id,label=el.innerHTML;el.disabled=true;el.textContent='Preparing backup…';
+    try{
+      const response=await api('/api/account/export.zip');
+      if(typeof response?.blob!=='function'||!response.headers.get('content-type')?.startsWith('application/zip'))throw Error('Backup could not be verified. No file was downloaded.');
+      const blob=await response.blob();
+      if(!S.session?.authenticated||S.session.user.id!==owner)throw Error('Sign in again before downloading this backup.');
+      const url=URL.createObjectURL(blob),link=document.createElement('a');
+      link.href=url;link.download='form_account_backup.zip';document.body.append(link);link.click();link.remove();
+      setTimeout(()=>URL.revokeObjectURL(url),30000);
+      toast('Backup prepared and validated. Store the downloaded ZIP privately.');
+    }finally{el.disabled=false;el.innerHTML=label;}
+    return;
+  }
   if(action==='reload-lists'){await refresh();return;}
   if(action==='page'){
     const section=el.dataset.section,page=Number(el.dataset.page),before=S.pages[section];
@@ -387,7 +406,7 @@ document.addEventListener('submit',async e=>{
     form.reset();closeModal();toast('Interest recorded. No payment taken.');
   }else if(form.id==='restore-form'){
     const file=f.get('file');if(!(file instanceof File)||!file.size)throw Error('Select a Dope Stuff backup ZIP.');
-    if(file.size>128*1024*1024)throw Error('The backup exceeds the 128 MB pilot limit.');
+    if(file.size>(S.session?.backup_limits?.zip_bytes||128*1024*1024))throw Error('The backup exceeds the current ZIP size limit.');
     const fd=new FormData();fd.append('file',file);
     const preview=await api('/api/account/restore-preview',{method:'POST',body:fd,form:true});
     S.pendingRestore=file;

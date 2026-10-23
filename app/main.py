@@ -14,8 +14,6 @@ import smtplib
 import ssl
 from email.message import EmailMessage
 import io
-import json
-import zipfile
 import hmac
 import os
 import re
@@ -36,10 +34,11 @@ from pydantic import BaseModel, Field, ValidationError, field_validator
 from typing import Literal
 from PIL import Image, ImageOps, UnidentifiedImageError
 from starlette.middleware.sessions import SessionMiddleware
+from starlette.background import BackgroundTask
 
 from .db import init_db, connect, rowdict, DATA_DIR, postgres_enabled
-from .backup import inspect_archive, MAX_ZIP_BYTES
-from . import photo_storage, photo_cleanup
+from .backup import inspect_archive
+from . import photo_storage, photo_cleanup, backup as portable_backup
 
 # EmailStr depends on email-validator. Avoid adding an undeclared package by using a small validator instead.
 EMAIL = re.compile(r"^[^\s@]{1,64}@[^\s@]{1,190}\.[^\s@]{2,}$")
@@ -379,7 +378,7 @@ def session(request:Request):
     except HTTPException: return {"authenticated":False,"user":None,"invite_required": bool(os.getenv('FORM_PILOT_INVITE_CODE')), "recovery_available": RECOVERY_MODE != "disabled", "recovery_local": RECOVERY_MODE == "local"}
     if not request.session.get("csrf"):
         request.session["csrf"] = secrets.token_urlsafe(32)
-    return {"authenticated":True,"user":user,"csrf":request.session["csrf"], "recovery_available": RECOVERY_MODE != "disabled", "recovery_local": RECOVERY_MODE == "local"}
+    return {"authenticated":True,"user":user,"csrf":request.session["csrf"], "recovery_available": RECOVERY_MODE != "disabled", "recovery_local": RECOVERY_MODE == "local", "backup_limits":portable_backup.limits()}
 
 @app.post("/api/auth/register")
 def register(p:Register,request:Request):
@@ -532,8 +531,17 @@ def confirm_recovery(payload: RecoveryConfirm, request: Request):
 
 @app.get("/api/account/export.zip")
 def export_account(user=Depends(current_user)):
-    """Portable private backup: records, sales, status history and available images."""
+    """Only return a portable backup after complete restore-contract validation."""
     with connect() as db:
+        begin_list_snapshot(db)
+        counts = {
+            'items': db.execute('SELECT COUNT(*) FROM items WHERE user_id=?', (user['id'],)).fetchone()[0],
+            'item_channels': db.execute('SELECT COUNT(*) FROM item_channels c JOIN items i ON i.id=c.item_id WHERE i.user_id=?', (user['id'],)).fetchone()[0],
+            'item_photos': db.execute('SELECT COUNT(*) FROM item_photos p JOIN items i ON i.id=p.item_id WHERE i.user_id=?', (user['id'],)).fetchone()[0],
+            'sales': db.execute('SELECT COUNT(*) FROM sales WHERE user_id=?', (user['id'],)).fetchone()[0],
+            'feedback': db.execute('SELECT COUNT(*) FROM feedback WHERE user_id=?', (user['id'],)).fetchone()[0],
+        }
+        portable_backup.check_export_counts(counts)
         items = [dict(r) for r in db.execute("SELECT * FROM items WHERE user_id=? ORDER BY id", (user['id'],))]
         channels = [dict(r) for r in db.execute("SELECT c.* FROM item_channels c JOIN items i ON i.id=c.item_id WHERE i.user_id=? ORDER BY c.item_id,c.channel", (user['id'],))]
         pictures = [dict(r) for r in db.execute("SELECT p.* FROM item_photos p JOIN items i ON i.id=p.item_id WHERE i.user_id=? ORDER BY p.item_id,p.position", (user['id'],))]
@@ -544,19 +552,21 @@ def export_account(user=Depends(current_user)):
               "account": user, "items": items, "item_channels": channels,
               "item_photos": pictures, "sales": sales, "feedback": feedback,
               "readme": "Personal backup. Do not publicly share; may contain inventory costs, personal notes and photographs."}
-    output = io.BytesIO()
-    with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-        archive.writestr("form_backup.json", json.dumps(backup, indent=2, ensure_ascii=False))
-        for pic in pictures:
-            file_name = Path(pic['file_path']).name
-            try:
-                encoded = photo_storage.read_photo(file_name)
-            except FileNotFoundError:
-                continue  # Existing v0.5 behavior for missing legacy photographs.
-            archive.writestr(f"photos/item-{pic['item_id']}/photo-{pic['id']}.webp", encoded)
+    output = portable_backup.build_archive(backup, read_photo=read_portable_photo,
+                                           **portable_validators())
+    size = output.seek(0, 2)
     output.seek(0)
-    return StreamingResponse(output, media_type="application/zip",
-        headers={"Content-Disposition": 'attachment; filename="form_account_backup.zip"', "Cache-Control": "no-store"})
+
+    def chunks():
+        try:
+            while block := output.read(64 * 1024):
+                yield block
+        finally:
+            output.close()
+
+    return StreamingResponse(chunks(), media_type="application/zip", background=BackgroundTask(output.close),
+        headers={"Content-Disposition": 'attachment; filename="form_account_backup.zip"', "Cache-Control": "no-store",
+                 "Content-Length":str(size)})
 
 
 def validate_restored_channel(channel: str, status: str, url: str):
@@ -565,12 +575,23 @@ def validate_restored_channel(channel: str, status: str, url: str):
     validate_listing_url(channel, url)
 
 
+def read_portable_photo(name):
+    try:
+        return photo_storage.read_photo(Path(name).name)
+    except photo_storage.PhotoTooLarge:
+        raise HTTPException(413, 'A stored photo exceeds the portable backup reader limit. No backup was produced.') from None
+
+
+def portable_validators():
+    return {'validate_item': ItemInput.model_validate,
+            'validate_channel_url': validate_restored_channel,
+            'validate_sale_channel': lambda channel: channel in CHANNELS or channel=='other',
+            'validate_image': encode_photo}
+
+
 async def read_restore_file(file: UploadFile, user: dict):
-    raw = await file.read(MAX_ZIP_BYTES + 1)
-    return inspect_archive(raw, user['email'], validate_item=lambda item: ItemInput.model_validate(item),
-        validate_channel_url=validate_restored_channel,
-        validate_sale_channel=lambda channel: channel in CHANNELS or channel=='other',
-        validate_image=encode_photo)
+    raw = await file.read(portable_backup.MAX_ZIP_BYTES + 1)
+    return inspect_archive(raw, user['email'], **portable_validators())
 
 
 @app.post("/api/account/restore-preview")

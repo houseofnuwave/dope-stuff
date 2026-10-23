@@ -199,7 +199,7 @@ See `RELEASE_V03.md` and `NEXT_BUILD_PLAN.md` for changes and pilot requirements
 
 ## v0.4 update — recovery and a more trustworthy listing flow
 
-Go to **Account → Preview a backup** to inspect an existing FORM `form_account_backup.zip`. Enter your current account password and type `RESTORE MY DATA` to import to a **blank account with the same email**. The restore can recover your historical inventory, photographs and cover order, marketplace-status records, sales and feedback. It never accesses external marketplaces. There is no merge or overwrite in this pilot. Archives are limited to 128 MB compressed / 256 MB expanded and 500 inventory items.
+Go to **Account → Preview a backup** to inspect an existing FORM `form_account_backup.zip`. Enter your current account password and type `RESTORE MY DATA` to import to a **blank account with the same email**. The restore can recover your historical inventory, photographs and cover order, marketplace-status records, sales and feedback. It never accesses external marketplaces. There is no merge or overwrite in this pilot. Export and restore share budgets of 128 MiB ZIP / 256 MiB expanded, 10 MiB metadata, up to 10,000 lifetime inventory items, 4,000 photos and 2,000 feedback records. All budgets apply together. Finished exports are validated before download; incomplete or oversized backups fail explicitly. See [BACKUP_RECOVERY.md](BACKUP_RECOVERY.md).
 
 Publish studio now displays a **7-part advisory completeness checklist** for the selected item. Verified condition must be chosen for new manual listings; if a source does not specify a condition, it is stored as **Unspecified** rather than falsely labeled new. The readiness checklist does not authenticate garments or guarantee factual accuracy.
 

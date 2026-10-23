@@ -64,16 +64,46 @@ and layout-overflow checks passed. Cloud CI also exercises old-cap boundaries
 and count snapshots against PostgreSQL; verify the candidate's actual run before
 claiming cloud validation.
 
-The portable account-restore limit remains 500 items. Pagination does not change
-that limit. Backup/export/restore bounds must be reconciled with lifetime catalog
-size before v1.0; browsing large histories is not proof that they are recoverable.
+At this milestone the portable account-restore limit still remained 500 items.
+The fourth pass below addresses that mismatch; pagination alone did not establish
+that larger histories were recoverable.
+
+## Fourth implementation pass: successful exports must be recoverable
+
+The two reproduced failures were a successful 501-item export rejected by its own
+restore validator, and a successful photo-incomplete ZIP rejected on restore.
+Export now uses a coherent database snapshot, requires every referenced photo,
+checks shared record/byte budgets and validates the completed archive through the
+actual restore validator before download headers. Missing/corrupt photos,
+inconsistent records, storage outages and exceeded budgets fail explicitly.
+
+The old 500-item ceiling is now 10,000 lifetime records, subject to the shared
+128 MiB compressed / 256 MiB expanded / 10 MiB metadata / 4,000-photo budgets.
+The first exceeded budget blocks portable export/restore; no records are silently
+truncated. Large output spills to private temporary storage, photo reads are
+bounded, and temporary handles close after success or failure. The UI uses the
+backend limits and prevents JSON/HTML errors becoming misleading ZIP downloads.
+
+Local validation: **90 backend tests passed**, including 19 new backup contract
+tests, plus Python compilation and JavaScript syntax checks. Verification includes
+a 501-item/500-sale/two-photo round-trip with complete
+record comparison, a sale committed during export, every budget, partial photo
+failure, temporary-file closure and sanitized storage errors. Clean local
+desktop/mobile Chromium journeys downloaded and validated actual archives above
+500 items and rejected missing-photo/HTML responses without a false download.
+The cloud job now repeats large record/photo recovery against real disposable
+PostgreSQL and private S3; verify its candidate result before claiming that pass.
+
+See `BACKUP_RECOVERY.md` for the complete contract and limits. Portable archives
+remain bounded; this does not replace full provider disaster recovery, immutable
+object retention or multipart backup support for accounts exceeding those budgets.
 
 ## Remaining release gates
 
 - [ ] Observe real seller workflow and establish measurable value.
 - [ ] Finish PostgreSQL concurrency coverage beyond item sale/publication and fix demonstrated races.
 - [x] Implement inventory, publishing, action-queue and sales pagination with boundary and browser tests.
-- [ ] Reconcile portable restore bounds with complete lifetime inventory and sales history.
+- [x] Align portable export/restore validation, advertised budgets and larger lifetime-history recovery.
 - [ ] Recover failed-upload/restore cleanup and reconcile interrupted writes.
 - [ ] Versioned migrations, reproducible dependency lock, upgrade and rollback drills.
 - [ ] Configure and verify real hosted HTTPS, PostgreSQL and private object storage.

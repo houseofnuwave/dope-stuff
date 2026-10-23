@@ -65,6 +65,10 @@ def main():
         assert_pagination_boundaries(client)
         for kind in ('actions', 'sales'):
             assert_live_count_snapshot(client, kind)
+        from tools.backup_checks import assert_export_snapshot
+        assert_export_snapshot(client, token, item)
+        large_backup=client.get('/api/account/export.zip')
+        assert large_backup.status_code==200,large_backup.text
         # Exercise the real PostgreSQL transaction with private S3 unavailable
         # during deletion, then recover against the same real object store.
         with patch.object(photo_storage, 'delete_photo', side_effect=OSError('test outage')):
@@ -85,7 +89,17 @@ def main():
             pass
         else:
             raise AssertionError('Deleted account photo remains in object storage')
-    print('CLOUD SMOKE PASSED: Postgres, private S3, inventory, export, concurrent sale/publication, deletion outage and retry.')
+        from tools.backup_checks import restore_after_deletion
+        restored_headers=restore_after_deletion(client, auth, large_backup.content)
+        recovered=[record for record in client.get('/api/items',params={'q':'CI-ONE'}).json()['items']
+                   if record['sku']=='CI-ONE'][0]
+        recovered_photo=client.get(f"/api/items/{recovered['id']}/photo")
+        assert recovered_photo.status_code==200 and recovered_photo.content==got.content
+        deleted_again=client.post('/api/account/delete',headers=restored_headers,json={
+            'password':auth['password'],'confirmation':'DELETE MY ACCOUNT'})
+        assert deleted_again.status_code==200,deleted_again.text
+        assert photo_cleanup.pending()==0
+    print('CLOUD SMOKE PASSED: Postgres/private S3, state races, pagination, deletion retry, large validated backup and complete recovery.')
 
 
 if __name__=='__main__': main()

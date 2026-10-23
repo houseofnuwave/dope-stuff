@@ -55,8 +55,11 @@ def run():
                         if body is not None:
                             headers['content-type']='application/json'
                         resp=api.request(method,url,headers=headers,data=body)
-                    return {'status':resp.status_code,'body':resp.text,
-                            'type':resp.headers.get('content-type','application/json')}
+                    content_type=resp.headers.get('content-type','application/json')
+                    binary=content_type.startswith('application/zip')
+                    return {'status':resp.status_code,'body':'' if binary else resp.text,
+                            'b64':base64.b64encode(resp.content).decode() if binary else None,
+                            'type':content_type}
 
                 page.expose_function('formBridge',bridge)
                 html=(root/'app/static/index.html').read_text().replace(
@@ -78,7 +81,8 @@ def run():
                     payload={kind:'form',entries};
                   }
                   const d=await window.formBridge(url,options.method||'GET',payload,options.headers?.['x-csrf-token']||'');
-                  return new Response(d.body,{status:d.status,headers:{'content-type':d.type}});
+                  const body=d.b64?Uint8Array.from(atob(d.b64),c=>c.charCodeAt(0)):d.body;
+                  return new Response(body,{status:d.status,headers:{'content-type':d.type}});
                 };return true;})()''')
                 page.add_script_tag(content=(root/'app/static/app.js').read_text())
                 email=f'browser-{device}@example.com'
@@ -236,6 +240,8 @@ def run():
 
                 from tools.ui_pagination import run_pagination_journey
                 run_pagination_journey(page, api, device)
+                from tools.ui_backup import run_backup_journey
+                run_backup_journey(page, api, device)
 
                 overflow=page.evaluate('document.documentElement.scrollWidth>window.innerWidth')
                 print(device,'UI + backup restore', 'PASS' if not errors else 'ERROR',

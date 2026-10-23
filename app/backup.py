@@ -8,19 +8,95 @@ from __future__ import annotations
 import io
 import json
 import re
+import tempfile
 import zipfile
 from dataclasses import dataclass
-from typing import Callable
+from typing import BinaryIO, Callable
 from fastapi import HTTPException
 
 MAX_ZIP_BYTES = 128 * 1024 * 1024
 MAX_UNCOMPRESSED_BYTES = 256 * 1024 * 1024
 MAX_JSON_BYTES = 10 * 1024 * 1024
 MAX_ARCHIVE_FILES = 4100
-MAX_RESTORE_ITEMS = 500
+MAX_RESTORE_ITEMS = 10_000
 MAX_RESTORE_PHOTOS = 4000
 MAX_RESTORE_FEEDBACK = 2000
 MAX_PHOTO_FILE_BYTES = 6 * 1024 * 1024
+
+
+def limits():
+    """The same budgets are advertised, exported and enforced on restore."""
+    return {'zip_bytes': MAX_ZIP_BYTES, 'expanded_bytes': MAX_UNCOMPRESSED_BYTES,
+            'metadata_bytes': MAX_JSON_BYTES, 'items': MAX_RESTORE_ITEMS,
+            'photos': MAX_RESTORE_PHOTOS, 'photo_bytes': MAX_PHOTO_FILE_BYTES,
+            'feedback': MAX_RESTORE_FEEDBACK}
+
+
+def check_export_counts(counts):
+    maxima = {'items': MAX_RESTORE_ITEMS, 'item_channels': MAX_RESTORE_ITEMS * 8,
+              'item_photos': MAX_RESTORE_PHOTOS, 'sales': MAX_RESTORE_ITEMS,
+              'feedback': MAX_RESTORE_FEEDBACK}
+    if any(counts[key] > maximum for key, maximum in maxima.items()):
+        raise HTTPException(413, 'Account exceeds portable backup record limits. No backup was produced; use operator recovery procedures.')
+    if counts['item_photos'] + 1 > MAX_ARCHIVE_FILES:
+        raise HTTPException(413, 'Account exceeds portable backup file limits. No backup was produced.')
+
+
+def build_archive(data, *, read_photo: Callable, **validators):
+    """Return a fully validated seekable ZIP, or an error before any response.
+
+    Large output spills to a private temporary file rather than retaining a
+    second full ZIP in memory. The caller must close the returned file.
+    """
+    check_export_counts({key: len(data[key]) for key in ('items', 'item_channels', 'item_photos', 'sales', 'feedback')})
+    try:
+        metadata = json.dumps(data, ensure_ascii=False, allow_nan=False, separators=(',', ':')).encode('utf-8')
+    except (TypeError, ValueError):
+        raise HTTPException(409, 'Stored account data failed backup validation. No backup was produced.') from None
+    if len(metadata) > MAX_JSON_BYTES:
+        raise HTTPException(413, 'Account exceeds the portable backup metadata limit. No backup was produced.')
+    if len(metadata) > MAX_UNCOMPRESSED_BYTES:
+        raise HTTPException(413, 'Account exceeds the portable backup expanded-size limit. No backup was produced.')
+    output = None
+    try:
+        output = tempfile.SpooledTemporaryFile(max_size=8 * 1024 * 1024, mode='w+b')
+        expanded = len(metadata)
+        with zipfile.ZipFile(output, 'w', compression=zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr('form_backup.json', metadata)
+            for photo in data['item_photos']:
+                try:
+                    encoded = read_photo(photo['file_path'])
+                except HTTPException:
+                    raise
+                except FileNotFoundError:
+                    raise HTTPException(409, 'Backup incomplete: a referenced photo is missing. No backup was produced.') from None
+                except Exception:
+                    raise HTTPException(503, 'Private photo storage is temporarily unavailable. No backup was produced.') from None
+                if len(encoded) > MAX_PHOTO_FILE_BYTES:
+                    raise HTTPException(413, 'A stored photo exceeds the portable backup photo-size limit. No backup was produced.')
+                expanded += len(encoded)
+                if expanded > MAX_UNCOMPRESSED_BYTES:
+                    raise HTTPException(413, 'Account exceeds the portable backup expanded-size limit. No backup was produced.')
+                archive.writestr(f"photos/item-{photo['item_id']}/photo-{photo['id']}.webp", encoded)
+                if output.tell() > MAX_ZIP_BYTES:
+                    raise HTTPException(413, 'Account exceeds the portable backup ZIP-size limit. No backup was produced.')
+        if output.tell() > MAX_ZIP_BYTES:
+            raise HTTPException(413, 'Account exceeds the portable backup ZIP-size limit. No backup was produced.')
+        output.seek(0)
+        try:
+            inspect_archive(output, data['account']['email'], retain_images=False, **validators)
+        except HTTPException:
+            raise HTTPException(409, 'Stored account data or photos failed backup validation. No backup was produced.') from None
+        output.seek(0)
+        return output
+    except OSError:
+        if output is not None:
+            output.close()
+        raise HTTPException(503, 'Temporary backup storage is unavailable. No backup was produced.') from None
+    except Exception:
+        if output is not None:
+            output.close()
+        raise
 
 
 @dataclass
@@ -62,13 +138,20 @@ def record_id(value, label: str) -> int:
     return value
 
 
-def inspect_archive(raw: bytes, email: str, *, validate_item: Callable,
+def inspect_archive(raw: bytes | BinaryIO, email: str, *, validate_item: Callable,
                     validate_channel_url: Callable, validate_sale_channel: Callable,
-                    validate_image: Callable) -> InspectedArchive:
-    if not raw or len(raw) > MAX_ZIP_BYTES:
+                    validate_image: Callable, retain_images: bool = True) -> InspectedArchive:
+    if isinstance(raw, bytes):
+        size, source = len(raw), io.BytesIO(raw)
+    else:
+        raw.seek(0, 2)
+        size = raw.tell()
+        raw.seek(0)
+        source = raw
+    if not size or size > MAX_ZIP_BYTES:
         fail('Backup ZIP is empty or exceeds the 128 MB pilot limit')
     try:
-        archive = zipfile.ZipFile(io.BytesIO(raw), 'r')
+        archive = zipfile.ZipFile(source, 'r')
     except (zipfile.BadZipFile, OSError):
         fail('Choose an intact FORM backup ZIP')
     with archive:
@@ -163,7 +246,9 @@ def inspect_archive(raw: bytes, email: str, *, validate_item: Callable,
             try:
                 raw_photo = archive.read(info)
                 # Re-encode to remove any metadata and reject malformed payloads.
-                image_bytes[old_id] = validate_image(raw_photo)
+                validated_image = validate_image(raw_photo)
+                if retain_images:
+                    image_bytes[old_id] = validated_image
             except Exception:
                 fail('Backup contains a damaged or unsupported photograph')
             validated_photos.append({'old_id':old_id,'item_id':item_id,'position':position,

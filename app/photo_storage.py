@@ -14,6 +14,10 @@ PHOTO_NAME = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._-]{0,95}\.(webp|png|jpg|jpeg)$
 MAX_STORED_PHOTO_BYTES = 8 * 1024 * 1024
 
 
+class PhotoTooLarge(RuntimeError):
+    """Stored data exceeds the reader's bounded resource budget."""
+
+
 def photo_backend():
     backend = os.getenv('FORM_PHOTO_STORAGE', 'local').lower().strip()
     if backend not in ('local', 's3'):
@@ -76,7 +80,7 @@ def read_photo(name: str) -> bytes:
             finally:
                 resp['Body'].close()
             if len(content) > MAX_STORED_PHOTO_BYTES:
-                raise RuntimeError('Stored photograph is oversized')
+                raise PhotoTooLarge('Stored photograph is oversized')
             return content
         except ClientError as exc:
             if exc.response.get('Error', {}).get('Code') in ('NoSuchKey','404','NotFound'):
@@ -86,7 +90,11 @@ def read_photo(name: str) -> bytes:
     try:
         if path.is_symlink():
             raise FileNotFoundError('Unsafe photo path')
-        return path.read_bytes()
+        with path.open('rb') as source:
+            content = source.read(MAX_STORED_PHOTO_BYTES + 1)
+        if len(content) > MAX_STORED_PHOTO_BYTES:
+            raise PhotoTooLarge('Stored photograph is oversized')
+        return content
     except FileNotFoundError:
         raise
 
