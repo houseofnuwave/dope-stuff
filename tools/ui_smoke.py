@@ -62,9 +62,11 @@ def run():
                             'type':content_type}
 
                 page.expose_function('formBridge',bridge)
-                html=(root/'app/static/index.html').read_text().replace(
-                    '<link rel="stylesheet" href="/static/styles.css">','').replace(
-                    '<script src="/static/app.js" defer></script>','')
+                html=((root/'app/static/index.html').read_text()
+                    .replace('<link rel="stylesheet" href="/static/styles.css">','')
+                    .replace('<script src="/static/listing_studio.js" defer></script>','')
+                    .replace('<script src="/static/app.js" defer></script>','')
+                    .replace('<script src="/static/listing_studio_ui.js" defer></script>',''))
                 page.set_content(html)
                 page.add_style_tag(content=(root/'app/static/styles.css').read_text())
                 page.evaluate('''(()=>{window.fetch=async function(url,options={}) {
@@ -84,7 +86,9 @@ def run():
                   const body=d.b64?Uint8Array.from(atob(d.b64),c=>c.charCodeAt(0)):d.body;
                   return new Response(body,{status:d.status,headers:{'content-type':d.type}});
                 };return true;})()''')
+                page.add_script_tag(content=(root/'app/static/listing_studio.js').read_text())
                 page.add_script_tag(content=(root/'app/static/app.js').read_text())
+                page.add_script_tag(content=(root/'app/static/listing_studio_ui.js').read_text())
                 email=f'browser-{device}@example.com'
 
                 def signup():
@@ -103,6 +107,14 @@ def run():
                 page.locator('#field-size').fill('Medium')
                 page.locator('#field-price').fill('120.00')
                 page.locator('#item-description').fill('Heavy leather moto jacket. Inspect the real jacket for visible wear and disclose all observed flaws.')
+                # Listing Studio must preserve handwritten prose while adding only measured facts.
+                page.locator('.listing-studio summary').click()
+                page.locator('.listing-studio-basics select').first.select_option('outerwear')
+                page.locator('.listing-studio-measurements label').filter(has_text='Pit to pit').locator('input').fill('22.5')
+                page.locator('.listing-studio-measurements label').filter(has_text='Sleeve').locator('input').fill('25')
+                page.locator('.listing-studio-basics input').first.fill('100% cotton per care tag')
+                page.locator('.listing-studio-basics textarea').fill('Small abrasion at left cuff')
+                assert 'Pit to pit: 22.5 in' in page.locator('.listing-studio-preview').inner_text()
                 # A real seller must choose condition; the button cannot silently assume "New".
                 assert not page.locator('#item-form').evaluate('(form)=>form.checkValidity()')
                 page.locator('#item-condition').select_option(label='Good')
@@ -116,6 +128,8 @@ def run():
                 page.locator('#item-form button[type="submit"]').click()
                 page.locator('.mobile-item .table-title' if device=='mobile' else '.desktop-item-table .table-title').first.wait_for(timeout=12000)
                 assert api.get('/api/items').json()['items'][0]['photo_count']==3
+                assert 'Pit to pit: 22.5 in' in api.get('/api/items').json()['items'][0]['description']
+                assert 'Small abrasion at left cuff' in api.get('/api/items').json()['items'][0]['description']
                 assert api.get('/api/items').json()['items'][0]['readiness']['complete']==7
                 print('CHECK',device,'first screen',flush=True)
                 page.locator('#toast-root').evaluate('(el)=>el.innerHTML=""')
@@ -161,6 +175,7 @@ def run():
                     print('RESTORE UI ERROR',page.locator('#toast-root').inner_text(),page.locator('#restore-results').inner_text())
                     raise
                 assert api.get('/api/items').json()['total']==1
+                assert 'Pit to pit: 22.5 in' in api.get('/api/items').json()['items'][0]['description']
                 assert api.get('/api/items').json()['items'][0]['photo_count']==3
                 assert api.get('/api/items').json()['items'][0]['readiness']['complete']==7
                 # v1.0: action-center journey after a real recorded sale.
