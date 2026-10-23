@@ -20,8 +20,12 @@ jobs:
           python -m pip install -r requirements.txt pytest httpx playwright
       - name: Compile backend and tools
         run: python -m compileall -q app tools
-      - name: Validate front-end JavaScript
-        run: node --check app/static/app.js
+      - name: Validate front-end JavaScript and Listing Studio rules
+        run: |
+          node --check app/static/app.js
+          node --check app/static/listing_studio.js
+          node --check app/static/listing_studio_ui.js
+          node tools/listing_studio_checks.js
       - name: Run isolated backend tests
         run: python -m pytest -q
       - name: Install Chromium
