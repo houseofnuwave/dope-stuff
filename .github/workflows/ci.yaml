@@ -1,0 +1,71 @@
+name: Dope Stuff quality gates
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install runtime and test requirements
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt pytest httpx playwright
+      - name: Compile backend and tools
+        run: python -m compileall -q app tools
+      - name: Validate front-end JavaScript
+        run: node --check app/static/app.js
+      - name: Run isolated backend tests
+        run: python -m pytest -q
+      - name: Install Chromium
+        run: python -m playwright install --with-deps chromium
+      - name: Desktop and mobile seller journeys
+        run: python tools/ui_smoke.py
+  cloud-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: form
+          POSTGRES_PASSWORD: form_ci_password
+          POSTGRES_DB: form_ci_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U form -d form_ci_test"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+    env:
+      FORM_ENV: test
+      FORM_DATABASE_URL: postgresql://form:form_ci_password@localhost:5432/form_ci_test
+      FORM_PHOTO_STORAGE: s3
+      FORM_S3_ENDPOINT: http://127.0.0.1:9000
+      FORM_S3_BUCKET: form-ci-temp
+      FORM_S3_PREFIX: ci/github
+      FORM_S3_REGION: us-east-1
+      FORM_S3_ACCESS_KEY_ID: formci
+      FORM_S3_SECRET_ACCESS_KEY: form_ci_test_secret
+      FORM_CLOUD_SMOKE_ALLOW_DELETE: YES_ISOLATED_TEST_ENV
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt httpx
+      - name: Start isolated MinIO object storage
+        run: |
+          docker run --detach --name minio-test -p 9000:9000 \
+            -e MINIO_ROOT_USER=formci -e MINIO_ROOT_PASSWORD=form_ci_test_secret \
+            minio/minio:latest server /data
+      - name: Cloud integration smoke (PostgreSQL + private S3)
+        run: python -m tools.cloud_smoke

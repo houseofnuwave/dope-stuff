@@ -1,0 +1,8 @@
+# A single, access-restricted private staging hostname. Keep public billing off.
+{$FORM_STAGE_DOMAIN} {
+  encode zstd gzip
+  basic_auth {
+    pilot {$FORM_PILOT_ACCESS_HASH}
+  }
+  reverse_proxy form:8000
+}

@@ -1,0 +1,53 @@
+# FORM private beta infrastructure. Requires a custom staging hostname,
+# separate PRIVATE Cloudflare R2 bucket, and securely supplied environment vars.
+# DO NOT merge staging and production data. No payments or marketplace automation.
+databases:
+  - name: form-seller-staging-postgres
+    region: virginia
+    plan: 0.5c-1g
+    ipAllowList: []
+    databaseName: form_staging
+    user: form_staging
+services:
+  - type: web
+    name: form-seller-staging
+    runtime: docker
+    region: virginia
+    plan: 0.5c-512mb
+    healthCheckPath: /readyz
+    envVars:
+      - key: FORM_RECOVERY_MODE
+        value: disabled
+      - key: FORM_ENV
+        value: staging
+      - key: FORM_CLOUD_MODE
+        value: "true"
+      - key: FORM_DATABASE_URL
+        fromDatabase:
+          name: form-seller-staging-postgres
+          property: connectionString
+      - key: FORM_PHOTO_STORAGE
+        value: s3
+      - key: FORM_S3_PREFIX
+        value: staging
+      - key: FORM_S3_REGION
+        value: auto
+      - key: FORM_S3_BUCKET
+        sync: false
+      - key: FORM_S3_ENDPOINT
+        sync: false
+      - key: FORM_S3_ACCESS_KEY_ID
+        sync: false
+      - key: FORM_S3_SECRET_ACCESS_KEY
+        sync: false
+      - key: FORM_DATA_DIR
+        value: /tmp/form-runtime
+      - key: FORM_COOKIE_SECURE
+        value: "true"
+      - key: FORM_SESSION_SECRET
+        generateValue: true
+      - key: FORM_PILOT_INVITE_CODE
+        generateValue: true
+      # For staging, the app accepts Render's provider-supplied HTTPS hostname.
+      # Later, set FORM_ALLOWED_HOSTS and FORM_PUBLIC_ORIGIN together if you
+      # attach a custom domain (and retain the Render host for health checks).

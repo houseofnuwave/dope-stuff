@@ -1,0 +1,37 @@
+data/
+.env
+__pycache__/
+.pytest_cache/
+.venv/
+*.pyc
+.DS_Store
+
+.form-local-secret
+.DS_Store
+*.zip
+.env.staging
+*.formbak
+ops/recovery/
+
+.env.cloud
+.env.production
+*.pem
+secrets/
+
+# Private configuration, storage, exports and archives
+.env.*
+!.env*.example
+*.db
+*.db-*
+*.sqlite*
+*.key
+*.p12
+*.pfx
+uploads/
+photos/
+backups/
+local-recovery-mail/
+playwright-report/
+test-results/
+# Historical screenshots are retained only in the original private archive.
+docs/*.png

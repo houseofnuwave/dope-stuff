@@ -1,0 +1,18 @@
+# Local evaluation only: binds solely to loopback; do not expose this to public internet.
+services:
+  form:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      FORM_ENV: development
+      FORM_COOKIE_SECURE: "false"
+      FORM_SESSION_SECRET: ${FORM_SESSION_SECRET:?Set a long random FORM_SESSION_SECRET in your shell before launching}
+      FORM_DATA_DIR: /data
+    volumes:
+      - form_local_data:/data
+    security_opt:
+      - no-new-privileges:true
+volumes:
+  form_local_data:

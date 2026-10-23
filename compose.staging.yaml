@@ -1,0 +1,62 @@
+# SINGLE-INSTANCE PRIVATE STAGING, NOT A PUBLIC PRODUCTION DEPLOYMENT.
+# Requires DNS for FORM_STAGE_DOMAIN and access to TCP ports 80/443.
+services:
+  form:
+    build: .
+    restart: unless-stopped
+    environment:
+      FORM_ENV: staging
+      FORM_COOKIE_SECURE: "true"
+      FORM_SESSION_SECRET: ${FORM_SESSION_SECRET:?Set a long random persistent session secret}
+      FORM_DATA_DIR: /data
+      FORM_ALLOWED_HOSTS: ${FORM_STAGE_DOMAIN:?Provide a real domain}
+      FORM_PUBLIC_ORIGIN: https://${FORM_STAGE_DOMAIN:?Provide a real domain}
+    volumes:
+      - form_stage_data:/data
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=256m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/readyz', timeout=3).read()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    networks:
+      - private
+
+  caddy:
+    image: caddy:2.9-alpine
+    restart: unless-stopped
+    depends_on:
+      form:
+        condition: service_healthy
+    environment:
+      FORM_STAGE_DOMAIN: ${FORM_STAGE_DOMAIN:?Provide a real domain}
+      FORM_PILOT_ACCESS_HASH: ${FORM_PILOT_ACCESS_HASH:?Generate bcrypt hash for closed pilot}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./ops/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_stage_config:/config
+      - caddy_stage_data:/data
+    networks:
+      - private
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+networks:
+  private: {}
+
+volumes:
+  form_stage_data:
+  caddy_stage_data:
+  caddy_stage_config:

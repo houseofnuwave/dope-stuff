@@ -1,0 +1,66 @@
+"""DESTRUCTIVE integration smoke for disposable PostgreSQL + S3/MinIO only.
+
+Requires FORM_DATABASE_URL containing a database name ending _test,
+FORM_S3_PREFIX beginning ci/, and FORM_CLOUD_SMOKE_ALLOW_DELETE=YES_ISOLATED_TEST_ENV.
+Never run against real seller records or cloud production/staging databases.
+"""
+from __future__ import annotations
+import io
+import os
+from urllib.parse import urlparse
+
+
+def main():
+    db_url = os.getenv('FORM_DATABASE_URL','')
+    prefix = os.getenv('FORM_S3_PREFIX','')
+    if (os.getenv('FORM_CLOUD_SMOKE_ALLOW_DELETE') != 'YES_ISOLATED_TEST_ENV'
+        or not urlparse(db_url).path.endswith('_test')
+        or not prefix.startswith('ci/') or os.getenv('FORM_PHOTO_STORAGE') != 's3'
+        or os.getenv('FORM_ENV','development') not in ('test','development')):
+        raise RuntimeError('Refusing to run destructive smoke outside an isolated test DB/bucket prefix')
+
+    from fastapi.testclient import TestClient
+    from PIL import Image
+    from app import photo_storage
+    from app.main import app
+
+    bucket=os.environ['FORM_S3_BUCKET']
+    s3=photo_storage.s3_client()
+    try:
+        s3.head_bucket(Bucket=bucket)
+    except Exception:
+        s3.create_bucket(Bucket=bucket)
+
+    with TestClient(app) as client:
+        auth={'name':'CI Integration','email':'ci-cloud-smoke@example.com',
+              'password':'throwaway-ci-password-012345',
+              'invite_code':os.getenv('FORM_PILOT_INVITE_CODE','')}
+        resp=client.post('/api/auth/register',json=auth)
+        assert resp.status_code==200, resp.text
+        token={'x-csrf-token':client.get('/api/session').json()['csrf']}
+        item = {'sku':'CI-ONE','title':'Vintage cotton work jacket', 'brand':'Sample',
+                'category':'Jacket','size':'M','color':'Blue','condition':'Like new',
+                'price_cents':12500,'cost_cents':5000,'shipping_cents':800,
+                'quantity':1, 'description':'Temporary test item, not real inventory.'}
+        resp=client.post('/api/items',json=item,headers=token)
+        assert resp.status_code==201,resp.text
+        item_id=resp.json()['id']
+        img=Image.new('RGB',(64,64),'white')
+        b=io.BytesIO();img.save(b,'PNG')
+        photo=client.post(f'/api/items/{item_id}/photos',headers=token,
+                          files={'photos':('test.png',b.getvalue(),'image/png')})
+        assert photo.status_code==200,photo.text
+        got=client.get(f'/api/items/{item_id}/photo')
+        assert got.status_code==200 and got.content[:4]==b'RIFF'
+        assert client.get('/readyz').status_code==200
+        backup=client.get('/api/account/export.zip')
+        assert backup.status_code==200 and len(backup.content)>100
+        listed=client.get('/api/items').json()
+        assert listed['total']==1
+        deleted=client.post('/api/account/delete',headers=token,json={
+            'password':auth['password'],'confirmation':'DELETE MY ACCOUNT'})
+        assert deleted.status_code==200,deleted.text
+    print('CLOUD SMOKE PASSED: Postgres, private S3 photo, inventory, account export, delete.')
+
+
+if __name__=='__main__': main()
