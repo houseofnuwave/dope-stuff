@@ -32,7 +32,6 @@ def validated_name(name: str) -> str:
     return name
 
 
-
 def validate_hosted_s3_endpoint(endpoint: str) -> None:
     """Never send private object-store credentials over plaintext in hosted mode.
 
@@ -53,9 +52,9 @@ def validate_hosted_s3_endpoint(endpoint: str) -> None:
             raise ValueError('Invalid endpoint')
         # Accessing port validates numeric range, including malformed host:port.
         parsed.port
-    except ValueError as exc:
-        # Do not echo the endpoint: it could contain embedded secrets.
-        raise RuntimeError('Hosted S3 endpoint must be a credential-free HTTPS origin') from exc
+    except ValueError:
+        # Suppress the original exception: malformed ports may contain secrets.
+        raise RuntimeError('Hosted S3 endpoint must be a credential-free HTTPS origin') from None
 
 def s3_client():
     required = ('FORM_S3_BUCKET', 'FORM_S3_ENDPOINT',
