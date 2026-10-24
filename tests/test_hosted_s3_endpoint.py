@@ -77,6 +77,14 @@ def test_hosted_cloud_startup_fails_closed_on_http_endpoint(tmp_path):
     assert 'Hosted S3 endpoint must be a credential-free HTTPS origin' in blocked.stderr
     assert 'fake' not in blocked.stderr
 
+    # urllib's malformed-port exception includes the raw port text; the app
+    # must suppress that exception context instead of leaking it in logs.
+    env['FORM_S3_ENDPOINT'] = 'https://account.r2.cloudflarestorage.com:private-marker'
+    malformed = subprocess.run(command, env=env, text=True, capture_output=True, timeout=20)
+    assert malformed.returncode != 0
+    assert 'Hosted S3 endpoint must be a credential-free HTTPS origin' in malformed.stderr
+    assert 'private-marker' not in malformed.stderr
+
     env['FORM_S3_ENDPOINT'] = 'https://account.r2.cloudflarestorage.com'
     accepted = subprocess.run(command, env=env, text=True, capture_output=True, timeout=20)
     assert accepted.returncode == 0, accepted.stderr
