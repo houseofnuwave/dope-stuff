@@ -115,6 +115,7 @@ if hosted:
             raise RuntimeError('Cloud mode requires private S3-compatible photo storage')
         if not all(os.getenv(key) for key in ('FORM_S3_BUCKET','FORM_S3_ENDPOINT','FORM_S3_ACCESS_KEY_ID','FORM_S3_SECRET_ACCESS_KEY')):
             raise RuntimeError('Cloud mode requires private bucket connection settings')
+        photo_storage.validate_hosted_s3_endpoint(os.environ['FORM_S3_ENDPOINT'])
         if len(os.getenv('FORM_PILOT_INVITE_CODE','')) < 16:
             raise RuntimeError('Cloud staging requires a 16+ character pilot invite code')
 
