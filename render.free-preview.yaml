@@ -1,0 +1,57 @@
+# TEMPORARY, NON-PRODUCTION Dope Stuff preview. No paid services.
+# DO NOT USE FOR CUSTOMER INVENTORY: Free Postgres expires after 30 days and
+# has no managed backups. The app stays invite-gated with private R2 photos.
+# This is deliberately separate from the production-minded render.yaml.
+databases:
+  - name: dope-stuff-free-preview-postgres
+    region: virginia
+    plan: free
+    ipAllowList: []
+    databaseName: form_preview
+    user: form_preview
+services:
+  - type: web
+    name: dope-stuff-free-preview
+    runtime: docker
+    region: virginia
+    plan: free
+    autoDeployTrigger: off
+    healthCheckPath: /readyz
+    # Initialize schema only when the disposable database has no user tables.
+    # On all subsequent starts it is check-only, matching hosted safety rules.
+    dockerCommand: /bin/sh -c 'python -m tools.free_preview_bootstrap && exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1'
+    envVars:
+      - key: FORM_FREE_PREVIEW_BOOTSTRAP
+        value: YES_FRESH_FREE_PREVIEW_ONLY
+      - key: FORM_RECOVERY_MODE
+        value: disabled
+      - key: FORM_ENV
+        value: staging
+      - key: FORM_CLOUD_MODE
+        value: "true"
+      - key: FORM_DATABASE_URL
+        fromDatabase:
+          name: dope-stuff-free-preview-postgres
+          property: connectionString
+      - key: FORM_PHOTO_STORAGE
+        value: s3
+      - key: FORM_S3_PREFIX
+        value: preview
+      - key: FORM_S3_REGION
+        value: auto
+      - key: FORM_S3_BUCKET
+        sync: false
+      - key: FORM_S3_ENDPOINT
+        sync: false
+      - key: FORM_S3_ACCESS_KEY_ID
+        sync: false
+      - key: FORM_S3_SECRET_ACCESS_KEY
+        sync: false
+      - key: FORM_DATA_DIR
+        value: /tmp/form-preview
+      - key: FORM_COOKIE_SECURE
+        value: "true"
+      - key: FORM_SESSION_SECRET
+        generateValue: true
+      - key: FORM_PILOT_INVITE_CODE
+        generateValue: true
