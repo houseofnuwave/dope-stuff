@@ -8,6 +8,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import re
+from urllib.parse import urlparse
 from . import db
 
 PHOTO_NAME = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._-]{0,95}\.(webp|png|jpg|jpeg)$', re.IGNORECASE)
@@ -31,11 +32,37 @@ def validated_name(name: str) -> str:
     return name
 
 
+
+def validate_hosted_s3_endpoint(endpoint: str) -> None:
+    """Never send private object-store credentials over plaintext in hosted mode.
+
+    Local development and isolated CI may use HTTP MinIO. Staging/production
+    require an HTTPS origin, without embedded credentials or URL components
+    that could redirect storage operations away from the intended endpoint.
+    """
+    if os.getenv('FORM_ENV', 'development').strip().lower() not in ('staging', 'production'):
+        return
+    try:
+        if not endpoint or any(char.isspace() for char in endpoint):
+            raise ValueError('Invalid endpoint')
+        parsed = urlparse(endpoint)
+        if (parsed.scheme != 'https' or not parsed.hostname or
+                parsed.username is not None or parsed.password is not None or
+                parsed.path not in ('', '/') or parsed.params or parsed.query or
+                parsed.fragment or '*' in parsed.hostname):
+            raise ValueError('Invalid endpoint')
+        # Accessing port validates numeric range, including malformed host:port.
+        parsed.port
+    except ValueError as exc:
+        # Do not echo the endpoint: it could contain embedded secrets.
+        raise RuntimeError('Hosted S3 endpoint must be a credential-free HTTPS origin') from exc
+
 def s3_client():
     required = ('FORM_S3_BUCKET', 'FORM_S3_ENDPOINT',
                 'FORM_S3_ACCESS_KEY_ID', 'FORM_S3_SECRET_ACCESS_KEY')
     if any(not os.getenv(k) for k in required):
         raise RuntimeError('Private object storage credentials are not configured')
+    validate_hosted_s3_endpoint(os.environ['FORM_S3_ENDPOINT'])
     import boto3
     from botocore.config import Config
     return boto3.client('s3',
