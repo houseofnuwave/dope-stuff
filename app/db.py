@@ -82,6 +82,29 @@ def init_db():
             schema_migrations.migrate(connection, backend)
 
 
+def hosted_postgres_sslmode(conninfo: str) -> str:
+    """Require encrypted PostgreSQL transport in staging and production.
+
+    libpq defaults to sslmode=prefer, which can silently fall back to
+    plaintext. Preserve stronger certificate checks requested in either the
+    connection string or FORM_DATABASE_SSLMODE. Reject insecure settings
+    rather than silently overriding them. Local/test PostgreSQL is unchanged.
+    """
+    from psycopg.conninfo import conninfo_to_dict
+
+    try:
+        requested = str(conninfo_to_dict(conninfo).get('sslmode') or '').strip().lower()
+    except Exception:
+        # libpq parsing errors may contain credentials from the connection URL.
+        raise RuntimeError('Invalid hosted PostgreSQL connection settings') from None
+    configured = os.getenv('FORM_DATABASE_SSLMODE', '').strip().lower()
+    strength = {'require': 1, 'verify-ca': 2, 'verify-full': 3}
+    if (requested and requested not in strength) or (configured and configured not in strength):
+        raise RuntimeError('Hosted PostgreSQL requires TLS: use require, verify-ca or verify-full')
+    return max((requested or 'require', configured or 'require'),
+               key=strength.__getitem__)
+
+
 @contextmanager
 def connect():
     if postgres_enabled():
@@ -92,9 +115,12 @@ def connect():
             raise RuntimeError('Postgres requires installing psycopg[binary] from requirements.txt') from exc
         # Single-connection, autocommit mode mirrors FORM's SQLite semantics.
         # Explicit BEGIN/COMMIT used by multi-step writes remain transactional.
-        conn = psycopg.connect(os.environ['FORM_DATABASE_URL'],
-                               row_factory=dict_row, autocommit=True,
-                               connect_timeout=8)
+        conninfo = os.environ['FORM_DATABASE_URL']
+        ssl_kwargs = {}
+        if os.getenv('FORM_ENV', 'development').strip().lower() in {'staging', 'production'}:
+            ssl_kwargs['sslmode'] = hosted_postgres_sslmode(conninfo)
+        conn = psycopg.connect(conninfo, row_factory=dict_row, autocommit=True,
+                               connect_timeout=8, **ssl_kwargs)
         try:
             yield PostgresConnection(conn)
         finally:

@@ -18,6 +18,7 @@ No zero-downtime rollout, provider recovery drill or paid deployment is claimed.
 - **Database:** dedicated Render-managed **PostgreSQL**, not SQLite on a disposable disk.
 - **Photographs:** a separate **private** Cloudflare R2 bucket, accessed by backend-only credentials through S3-compatible boto3 calls. Public image URLs and browser-side credentials are not used.
 - **TLS:** Render's `https://YOUR-SERVICE.onrender.com` staging hostname. A paid custom domain is optional at this stage.
+  PostgreSQL connections in `FORM_ENV=staging` or `production` now require encrypted transport (`sslmode=require` minimum), even if libpq defaults to `prefer`. A connection URL or `FORM_DATABASE_SSLMODE` may request stronger `verify-ca`/`verify-full`; stronger verification is never downgraded. Insecure modes (`disable`, `allow`, `prefer`) fail closed before connecting. **`require` encrypts traffic but does not establish hostname identity**; use `verify-full` with appropriate provider CA configuration for stronger assurance. Confirm the database provider supports TLS before deploying; if it does not, resolve the provider configuration rather than disabling this gate. Local/test PostgreSQL is unchanged.
 - **Access:** registered seller accounts AND a 16+ character pilot invite code for registrations. This is an early beta access gate, **not** full invitation management or email verification.
 
 ## What the owner must do (no passwords sent in chat)
