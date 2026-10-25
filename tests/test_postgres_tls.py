@@ -93,7 +93,7 @@ def test_test_environment_keeps_plaintext_local_postgres_available(monkeypatch):
 
 def test_hosted_malformed_conninfo_does_not_echo_credentials(monkeypatch):
     monkeypatch.setenv('FORM_ENV', 'staging')
-    monkeypatch.setenv('FORM_DATABASE_URL', 'postgresql://user:private-marker@bad host/db')
+    monkeypatch.setenv('FORM_DATABASE_URL', 'user=private-marker invalid-conninfo')
     monkeypatch.delenv('FORM_DATABASE_SSLMODE', raising=False)
     captured = spy_connect(monkeypatch)
     with pytest.raises(RuntimeError) as exc:
