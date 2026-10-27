@@ -76,6 +76,15 @@ if ENVIRONMENT not in {'development', 'test', 'staging', 'production'}:
     raise RuntimeError('FORM_ENV must be development, test, staging or production')
 production = ENVIRONMENT == 'production'
 hosted = ENVIRONMENT in {'staging', 'production'}
+# Render's local filesystem is ephemeral. Refuse a publicly hosted development
+# server or an accidental SQLite/local-photo fallback even if the Blueprint
+# omitted its cloud-mode variable. Self-hosted persistent-volume staging remains
+# supported; this guard applies only when Render identifies its runtime.
+if os.getenv('RENDER', '').lower() == 'true':
+    if not hosted:
+        raise RuntimeError('Render hosting requires FORM_ENV=staging or production')
+    if os.getenv('FORM_CLOUD_MODE', '').lower() != 'true':
+        raise RuntimeError('Render hosting requires FORM_CLOUD_MODE=true (PostgreSQL and private S3 photo storage)')
 session_secret = os.getenv('FORM_SESSION_SECRET', '')
 cookie_secure = os.getenv('FORM_COOKIE_SECURE', 'false').lower() == 'true'
 allowed_hosts = [host.strip().lower() for host in os.getenv('FORM_ALLOWED_HOSTS', '').split(',') if host.strip()]
