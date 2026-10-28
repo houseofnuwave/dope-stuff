@@ -63,12 +63,32 @@ as the intended app. Do not paste credentials into commands or commit them.
    python -m tools.migrate
    ```
 
-4. Explicitly apply the pending batch while writes remain stopped:
+4. Explicitly apply the pending batch while writes remain stopped. For
+   **development/test only**, the existing local command remains available:
 
    ```sh
    python -m tools.migrate --apply
    python -m tools.migrate
    ```
+
+   For **staging/production**, the operator must independently verify matching
+   database and photo recovery points, stop all writes, inspect the intended
+   target, and then provide **both** the CLI confirmation and a one-command
+   environment acknowledgement (not a persistent service environment setting):
+
+   ```sh
+   FORM_MIGRATION_CONFIRM=YES_BACKUP_VERIFIED_AND_WRITES_STOPPED \\
+     python -m tools.migrate --apply --confirm-hosted-maintenance
+   python -m tools.migrate
+   ```
+
+   Hosted `--apply` without both confirmations exits **2 before connecting**.
+   Read-only inspection never requires approval. The acknowledgement is not
+   evidence of backup integrity, maintenance exclusivity, correct target
+   selection, or a tested provider restore. Do not bypass the gate by changing
+   `FORM_ENV`; never set the acknowledgement in `render.yaml`, CI deployment
+   variables, or the long-lived web service environment. Keep approval scoped
+   to the explicit maintenance command after independently completing steps 1–3.
 
    A successful check exits 0. CLI output is limited to status/version counts;
    driver errors and connection details are not printed. The inspection command
