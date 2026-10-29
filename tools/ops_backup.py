@@ -97,9 +97,11 @@ def gather_snapshot(temp_root: Path):
 
 def create_backup(output: Path):
     key = key_from_environment()
-    output = output.expanduser().resolve()
+    # Keep the final path component intact: resolve() follows a dangling
+    # symlink and could publish the archive at its unexpected target.
+    output = Path(os.path.abspath(output.expanduser()))
     output.parent.mkdir(parents=True, exist_ok=True)
-    if output.exists():
+    if os.path.lexists(output):
         raise BackupError('Refusing to overwrite an existing backup')
     fd, pending_name = tempfile.mkstemp(prefix='.form-backup-', dir=output.parent)
     os.close(fd)
@@ -131,7 +133,13 @@ def create_backup(output: Path):
             os.chmod(pending, 0o600)
         # Do not publish until encryption completed and the archive is verifiable.
         verify_backup(pending)
-        os.replace(pending, output)
+        # Atomic no-clobber publication: os.replace() would overwrite another
+        # backup created after our initial existence check. The temporary file
+        # lives in the destination directory, so this link is same-filesystem.
+        try:
+            os.link(pending, output)
+        except FileExistsError as exc:
+            raise BackupError('Refusing to overwrite an existing backup') from exc
         return {'path':str(output),'photo_count':photo_count,'encrypted':True}
     finally:
         pending.unlink(missing_ok=True)
