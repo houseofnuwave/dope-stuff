@@ -213,6 +213,15 @@ def validate_zip(path: Path):
                     row = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",(table,)).fetchone()
                     if not row:
                         raise BackupError('Required database table missing')
+                # A valid ZIP checksum alone cannot prove that every image
+                # referenced by the restored inventory is actually present.
+                referenced = {row[0] for row in db.execute('SELECT file_path FROM item_photos')}
+                referenced.update(row[0] for row in db.execute(
+                    'SELECT photo_path FROM items WHERE photo_path IS NOT NULL'))
+                archived = {name[7:] for name in expected if name.startswith('photos/')}
+                if (any(not isinstance(name, str) or not valid_photo_filename(name)
+                        for name in referenced) or referenced != archived):
+                    raise BackupError('Backup photo files do not match database references')
         return {'files':len(expected),'photos':sum(name.startswith('photos/') for name in expected),
                 'created_at':manifest['created_at']}
 
