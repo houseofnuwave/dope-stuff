@@ -107,6 +107,10 @@ if hosted:
     path = os.getenv('FORM_DATA_DIR', '')
     if not path or not Path(path).is_absolute():
         raise RuntimeError('Hosted mode requires an absolute mounted FORM_DATA_DIR path')
+    # Every hosted pilot must be invite-only, including self-hosted staging.
+    # Cloud storage selection must not decide who can create seller accounts.
+    if len(os.getenv('FORM_PILOT_INVITE_CODE', '').strip()) < 16:
+        raise RuntimeError('Hosted mode requires a 16+ character pilot invite code')
     # Cloud staging must never accidentally write to ephemeral SQLite or disk.
     if os.getenv('FORM_CLOUD_MODE', '').lower() == 'true':
         if not os.getenv('FORM_DATABASE_URL', '').startswith(('postgresql://','postgres://')):
@@ -115,8 +119,6 @@ if hosted:
             raise RuntimeError('Cloud mode requires private S3-compatible photo storage')
         if not all(os.getenv(key) for key in ('FORM_S3_BUCKET','FORM_S3_ENDPOINT','FORM_S3_ACCESS_KEY_ID','FORM_S3_SECRET_ACCESS_KEY')):
             raise RuntimeError('Cloud mode requires private bucket connection settings')
-        if len(os.getenv('FORM_PILOT_INVITE_CODE','')) < 16:
-            raise RuntimeError('Cloud staging requires a 16+ character pilot invite code')
 
 # v0.7 recovery transports: local secure spool for offline founder tests,
 # SMTP over TLS for hosted pilots, or disabled. No token is sent in an API response.
