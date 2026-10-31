@@ -105,7 +105,8 @@ def test_hosted_mode_rejects_insecure_config(tmp_path):
              FORM_PUBLIC_ORIGIN='https://stage.example.com',FORM_DATA_DIR=str(tmp_path))
     r=subprocess.run([sys.executable,'-c',script],capture_output=True,text=True,env=env,timeout=20)
     assert r.returncode!=0 and 'Hosted mode requires FORM_SESSION_SECRET' in r.stderr
-    env.update(FORM_SESSION_SECRET=secrets.token_urlsafe(48),FORM_COOKIE_SECURE='true')
+    env.update(FORM_SESSION_SECRET=secrets.token_urlsafe(48), FORM_COOKIE_SECURE='true',
+               FORM_PILOT_INVITE_CODE=secrets.token_urlsafe(24))
     r=subprocess.run([sys.executable,'-c',script],capture_output=True,text=True,env=env,timeout=20)
     assert r.returncode==0,r.stderr
     assert r.stdout.strip()=='staging'
