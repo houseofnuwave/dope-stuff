@@ -4,7 +4,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 WORKDIR /srv/form
 RUN groupadd -r form && useradd --no-log-init -r -g form form && mkdir /data && chown form:form /data
 COPY requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
+# Reject inconsistent dependency graphs in the actual release image at build time.
+RUN pip install --no-cache-dir -r requirements.txt && python -m pip check
 COPY app ./app
 COPY tools ./tools
 USER form
