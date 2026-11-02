@@ -10,6 +10,7 @@ services:
       FORM_ENV: staging
       FORM_COOKIE_SECURE: "true"
       FORM_SESSION_SECRET: ${FORM_SESSION_SECRET:?Set a long random persistent session secret}
+      FORM_PILOT_INVITE_CODE: ${FORM_PILOT_INVITE_CODE:?Set a unique private pilot invite code (16+ characters)}
       FORM_DATA_DIR: /data
       FORM_ALLOWED_HOSTS: ${FORM_STAGE_DOMAIN:?Provide a real domain}
       FORM_PUBLIC_ORIGIN: https://${FORM_STAGE_DOMAIN:?Provide a real domain}
