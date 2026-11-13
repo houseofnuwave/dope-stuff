@@ -84,7 +84,7 @@ function authLanding(){
    </div>`;
 }
 function shell(){
- const nav=[['overview','grid','Overview'],['inventory','box','Inventory'],['publish','send','Publish studio'],['actions','alert','Action center'],['sales','chart','Sales & profit'],['plans','spark','Pricing'],['feedback','heart','Feedback'],['account','settings','Account']];
+ const nav=[['overview','grid','Overview'],['inventory','box','Inventory'],['publish','send','Publish studio'],['actions','alert','Action center'],['sales','chart','Sales & profit'],['offer','chart','Offer Lab'],['plans','spark','Pricing'],['feedback','heart','Feedback'],['account','settings','Account']];
  const current=nav.find(n=>n[0]===S.nav)?.[2]||'Workspace';
  const links=nav.map(([key,ic,name])=>`<button class="nav-btn ${S.nav===key?'active':''}" data-nav="${key}">${icon(ic)} ${name}</button>`).join('');
  APP.innerHTML=`<div class="shell"><aside class="sidebar"><a href="#overview" class="brand">Dope Stuff<span>SELLER OS</span></a><div class="nav-group-label">WORKSPACE</div>${links}<div class="sidebar-bottom"><div class="alert small">${icon('shield')} <b>Assisted-only pilot</b><br>No marketplace is automatically connected or synced.</div><div class="sidebar-profile"><div class="avatar">${escapeHtml((S.session.user.name||'U')[0].toUpperCase())}</div><div style="flex:1;min-width:0"><div class="strong small" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(S.session.user.name)}</div><div class="tiny muted">Founding seller</div></div><button class="icon-btn" data-action="logout" title="Sign out" aria-label="Sign out">${icon('logout')}</button></div></div></aside><main class="main-area"><header class="topbar"><div class="row"><span class="brand" style="font-size:21px;display:none" id="mobile-brand">Dope Stuff</span><span class="small muted">Workspace</span><span class="muted">/</span><span class="small strong">${current}</span></div><div class="row"><span class="pill green">${icon('checkcircle',12)} Pilot workspace</span><button class="btn small" data-action="new">${icon('plus',15)} New listing</button></div></header><section id="screen" class="content"></section></main></div><div class="mobile-nav">${nav.filter(([key])=>['overview','inventory','publish','actions','sales'].includes(key)).map(([key,ic,name])=>`<button data-nav="${key}" class="${S.nav===key?'active':''}">${icon(ic)}${name==='Action center'?'Action':name==='Sales & profit'?'Sales':name.split(' ')[0]}</button>`).join('')}<button data-nav="account" class="${S.nav==='account'?'active':''}">${icon('settings')}More</button></div>`;
@@ -141,6 +141,55 @@ function plansView(){
 }
 function feedbackView(){return `${head('Help shape Dope Stuff.','We want evidence from working resellers, not feature wishlists alone.')}
  <div class="card card-pad feedbackbox"><div class="eyebrow">PRODUCT RESEARCH</div><h3 style="margin:12px 0">What was difficult today?</h3><p class="small">Tell us about the real workflow you attempted, the marketplace involved, and how much time you expected to save.</p><form id="feedback-form"><div class="form-block"><label for="rating">Overall usefulness</label><select name="rating" id="rating"><option value="5">5 — Extremely useful</option><option value="4">4 — Useful</option><option value="3">3 — Somewhat useful</option><option value="2">2 — Limited value</option><option value="1">1 — Not useful</option></select></div><div class="form-block"><label for="feedback-text">Your feedback</label><textarea id="feedback-text" name="message" required minlength="5" placeholder="I was trying to ... and couldn't ..."></textarea></div><button class="btn">Submit feedback ${icon('arrow')}</button></form></div><div class="card card-pad feedbackbox" style="margin-top:18px"><h3>Three questions we are testing</h3><div class="seller-check">${icon('checkcircle')} Can sellers prepare a quality listing faster than they do today?</div><div class="seller-check">${icon('checkcircle')} Can sellers avoid forgetting to remove sold items?</div><div class="seller-check">${icon('checkcircle')} Will sellers pay for one clear inventory system?</div></div>`;}
+
+function offerLabView(){
+ return `${head('Offer Lab.','Know what you keep before accepting an offer. Independent estimates, not settlement quotes.')}
+ <div class="two-col">
+  <div class="card card-pad"><div class="eyebrow">ESTIMATED GRAILED SALE</div><h3 style="margin:12px 0">Model your next offer.</h3>
+   <form id="offer-lab-form" autocomplete="off" class="offer-lab-form">
+    <label>Offer / item price ($)<input name="sale" type="number" min="0.01" max="9999999.99" step="0.01" value="120.00" required></label>
+    <label>What you paid for the item ($)<input name="cost" type="number" min="0" step="0.01" value="40.00" required></label>
+    <label>Shipping method<select name="shipping_mode"><option value="grailed_label">Grailed Label</option><option value="own_label">My own shipping label</option></select></label>
+    <label>Buyer-paid shipping ($; own label only)<input name="buyer_shipping" type="number" min="0" step="0.01" value="0.00"></label>
+    <label>My shipping/packaging cost ($)<input name="postage" type="number" min="0" step="0.01" value="0.00"></label>
+    <label>Processing rate (%)<input name="processing_percent" type="number" min="0" max="100" step="0.01" value="3.49" required></label>
+    <label>Fixed processing charge ($)<input name="processing_fixed" type="number" min="0" step="0.01" value="0.49" required></label>
+    <p class="fineprint">Defaults: US domestic Stripe-onboarded processing (3.49% + $0.49). Rates vary by geography and Stripe status. Processing can also apply to tax; this estimate excludes tax and other adjustments.</p>
+   </form>
+  </div>
+  <div class="card card-pad" aria-live="polite" aria-atomic="true" id="offer-lab-results">
+   <div class="eyebrow">YOUR ESTIMATED TAKE-HOME</div><h3 style="margin:12px 0">Adjust your offer to see the outcome.</h3>
+  </div>
+ </div>
+ <div class="notice small" style="margin-top:18px">Grailed seller fees: 6% (minimum $1.99) when the commission base is below $120; 9% at or above $120. Your own-label buyer shipping is part of the commission base. Payment processing is charged separately. Verify current charges before accepting. <a href="https://support.grailed.com/hc/en-us/articles/30282580172045-What-are-the-fees" target="_blank" rel="noopener noreferrer">Grailed fee documentation</a> · <a href="https://support.grailed.com/hc/en-us/articles/30299544492301-Does-Grailed-charge-a-payment-processing-fee" target="_blank" rel="noopener noreferrer">Processing fees</a>.</div>`;
+}
+function updateOfferLab(){
+ const form=document.getElementById('offer-lab-form'),out=document.getElementById('offer-lab-results');
+ if(!form||!out||!window.DopeOfferLab)return;
+ try{
+  const f=new FormData(form),Lab=window.DopeOfferLab;
+  const cents=k=>Lab.dollarsToCents(f.get(k));
+  const result=Lab.estimate({
+   saleCents:cents('sale'),costCents:cents('cost'),postageCents:cents('postage'),
+   buyerShippingCents:cents('buyer_shipping'),processingFixedCents:cents('processing_fixed'),
+   processingPercent:String(f.get('processing_percent')),shippingMode:String(f.get('shipping_mode'))
+  });
+  out.innerHTML=`<div class="eyebrow">YOUR ESTIMATED TAKE-HOME</div>
+  <div class="offer-value">${money(result.sellerPayoutCents)}</div>
+  <p class="small muted">Estimated payout before item acquisition cost and taxes.</p>
+  <div class="offer-profit ${result.isLoss?'offer-loss':''}">Net profit: <strong>${money(result.netProfitCents)}</strong></div>
+  <div class="offer-breakdown">
+   <div><span>Sale + buyer shipping</span><strong>${money(result.grossReceiptsCents)}</strong></div>
+   <div><span>Grailed commission (${result.commissionRatePercent}%)</span><span>−${money(result.commissionCents)}</span></div>
+   <div><span>Estimated processing</span><span>−${money(result.processingCents)}</span></div>
+   <div><span>Seller shipping/packaging</span><span>−${money(result.postageCents)}</span></div>
+   <div><span>Cost of item</span><span>−${money(result.costCents)}</span></div>
+   <div><span>Estimated margin</span><strong>${result.marginPercent}%</strong></div>
+  </div>
+  <p class="fineprint" style="margin-top:16px">This calculation is illustrative, uses your assumptions, and isn't connected to Grailed or Stripe. Actual taxes, payment fees, promotions and shipping arrangements can change the outcome.</p>`;
+ }catch(err){out.innerHTML=`<div class="eyebrow">CHECK YOUR INPUTS</div><p class="offer-loss" role="alert">${escapeHtml(err.message)}</p>`;}
+}
+
 function accountView(){return `${head('Your account.','Own your catalog, keep a complete backup, and recover it when necessary.')}
  <div class="two-col"><div class="card card-pad"><div class="eyebrow">DATA PORTABILITY</div><h3 style="margin-top:12px">Your records. Always yours.</h3><p class="small">Download a private ZIP of your inventory, photos, sales, historical feedback, and self-reported marketplace statuses. Store it securely — it includes financial details and personal notes.</p><button class="btn" data-action="download-backup">${icon('download')} Download full backup</button><p class="fineprint" style="margin-top:13px">This archive is not encrypted. Store it in a private location. Incomplete backups are blocked before download. ${backupLimitsLabel()}.</p></div>
  <div class="card card-pad"><div class="eyebrow">RECOVERY</div><h3 style="margin-top:12px">Restore your inventory.</h3><p class="small">Preview an original Dope Stuff backup, then restore it into a <strong>blank</strong> account using the same email. A restore never publishes or changes external listings.</p><button class="btn secondary" data-action="restore-account">Preview a backup ${icon('arrow',14)}</button><p class="fineprint" style="margin-top:13px">${backupLimitsLabel()}. Existing records cannot be overwritten or merged.</p></div></div>
@@ -152,7 +201,7 @@ function restoreAccountModal(){S.pendingRestore=null;modal('Restore a Dope Stuff
  <form id="restore-form" class="stack" style="margin-top:18px"><div class="form-block"><label for="restore-file">Original Dope Stuff backup ZIP</label><input id="restore-file" name="file" type="file" accept=".zip,application/zip" required><div class="hint">${backupLimitsLabel()}.</div></div><button class="btn secondary" type="submit">Inspect backup first ${icon('search',15)}</button><div id="restore-results" aria-live="polite"></div></form>`, '', false);}
 function deleteAccountModal(){modal('Permanently delete Dope Stuff account',`<div class="alert small">${icon('alert')} This action cannot be undone. Download your backup first. Photo cleanup may continue in the background; historical backups and object versions are not erased by this request. Any published marketplace listings stay live until you remove them yourself.</div>
  <form id="delete-account-form" style="margin-top:20px" class="stack"><div class="form-block"><label for="delete-confirm">Type DELETE MY ACCOUNT to confirm</label><input id="delete-confirm" name="confirmation" autocomplete="off" required pattern="DELETE MY ACCOUNT" placeholder="DELETE MY ACCOUNT"></div><div class="form-block"><label for="delete-password">Current password</label><input id="delete-password" type="password" name="password" autocomplete="current-password" required minlength="10"></div><button class="btn danger full" type="submit">Permanently delete my data</button></form>`, '', false);}
-function render(){if(!S.session?.authenticated){authLanding();return;}shell();let html={overview:overviewView,inventory:inventoryView,publish:publishView,sales:salesView,plans:plansView,feedback:feedbackView,account:accountView,actions:actionsView}[S.nav]?.()||overviewView();$('#screen').innerHTML=html;}
+function render(){if(!S.session?.authenticated){authLanding();return;}shell();let html={overview:overviewView,inventory:inventoryView,publish:publishView,sales:salesView,offer:offerLabView,plans:plansView,feedback:feedbackView,account:accountView,actions:actionsView}[S.nav]?.()||overviewView();$('#screen').innerHTML=html;if(S.nav==='offer')updateOfferLab();}
 async function fetchListPage(path,key,page){
  const query=path.includes('?')?'&':'?';
  let data=await api(`${path}${query}limit=${PAGE_SIZE}&offset=${page*PAGE_SIZE}`);
@@ -366,7 +415,10 @@ document.addEventListener('click',e=>{
  const el=e.target.closest('[data-action]');if(el && (el.dataset.action!=='dismiss'||e.target===el)){e.preventDefault();handleAction(el,e);return;}
  const navEl=e.target.closest('[data-nav]');if(navEl){e.preventDefault();nav(navEl.dataset.nav);}
 });
+document.addEventListener('input',e=>{if(e.target.closest('#offer-lab-form'))updateOfferLab();});
+document.addEventListener('change',e=>{if(e.target.closest('#offer-lab-form'))updateOfferLab();});
 document.addEventListener('submit',async e=>{
+ if(e.target.id==='offer-lab-form'){e.preventDefault();updateOfferLab();return;}
  const form=e.target;if(!['auth-form','item-form','sale-form','channel-form','feedback-form','pilot-form','import-form','delete-account-form','restore-form','password-form','recovery-request-form','recovery-confirm-form'].includes(form.id))return;
  e.preventDefault();const btn=form.querySelector('button[type=submit],button:not([type])');if(btn)btn.disabled=true;
  try{
