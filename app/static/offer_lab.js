@@ -14,7 +14,7 @@
 
   function dollarsToCents(value) {
     const text = String(value).trim();
-    if (!/^\\d{1,7}(?:\\.\\d{1,2})?$/.test(text)) throw new Error('Enter a nonnegative amount with at most two decimals.');
+    if (!/^\d{1,7}(?:\.\d{1,2})?$/.test(text)) throw new Error('Enter a nonnegative amount with at most two decimals.');
     const parts = text.split('.');
     const cents = Number(parts[0]) * 100 + Number((parts[1] || '').padEnd(2, '0'));
     if (!Number.isSafeInteger(cents) || cents > MAX_CENTS) throw new Error('Amount exceeds the supported range.');
@@ -23,7 +23,7 @@
 
   function percentToBasisPoints(value) {
     const text = String(value).trim();
-    if (!/^\\d{1,2}(?:\\.\\d{1,2})?$|^100(?:\\.0{1,2})?$/.test(text)) {
+    if (!/^\d{1,2}(?:\.\d{1,2})?$|^100(?:\.0{1,2})?$/.test(text)) {
       throw new Error('Enter a processing percentage from 0 to 100 with at most two decimals.');
     }
     const parts = text.split('.');
