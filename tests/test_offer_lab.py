@@ -75,3 +75,23 @@ def test_zero_profit_is_not_falsely_marked_as_loss():
     result = calculate(p)
     assert result["netProfitCents"] == 0
     assert result["isLoss"] is False
+
+def test_decimal_input_parsers_accept_valid_cents_and_percentages():
+    if not NODE:
+        pytest.skip("Node.js unavailable")
+    code = (
+        "const e=require('./app/static/offer_lab.js');"
+        "console.log(JSON.stringify({"
+        "amount:e.dollarsToCents('19.99'),"
+        "processing:e.percentToBasisPoints('3.49'),"
+        "maximum:e.percentToBasisPoints('100')"
+        "}))"
+    )
+    result = subprocess.run([NODE, "-e", code], capture_output=True, text=True,
+                            cwd=ROOT, timeout=5)
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {
+        "amount": 1999,
+        "processing": 349,
+        "maximum": 10000,
+    }
