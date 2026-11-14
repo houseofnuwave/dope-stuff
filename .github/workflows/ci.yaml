@@ -10,6 +10,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -33,6 +35,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - name: Build the actual application image
         run: docker build --tag dope-stuff-container-ci .
       - name: Start disposable container without external networking or host volumes
@@ -75,6 +79,8 @@ jobs:
       FORM_CLOUD_SMOKE_ALLOW_DELETE: YES_ISOLATED_TEST_ENV
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
