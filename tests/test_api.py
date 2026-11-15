@@ -99,11 +99,12 @@ def test_csv_and_formula_protection(seller,item_input):
 
 def test_sales_export_escapes_formula_like_inventory_fields(seller,item_input):
     c=seller['client'];h=seller['csrf']
+    unsafe_sku=item_input.copy()
+    unsafe_sku['sku']='=HYPERLINK("https://example.invalid","sku")'
+    assert c.post('/api/items',headers=h,json=unsafe_sku).status_code==422
+
     item=item_input.copy()
-    item.update(
-        sku='=HYPERLINK("https://example.invalid","sku")',
-        title='+cmd|/C calc',
-    )
+    item.update(sku='SAFE-LEDGER-001',title='+cmd|/C calc')
     created=c.post('/api/items',headers=h,json=item)
     assert created.status_code==201, created.text
     item_id=created.json()['id']
@@ -120,7 +121,7 @@ def test_sales_export_escapes_formula_like_inventory_fields(seller,item_input):
     assert exported.status_code==200
     rows=list(csv.DictReader(io.StringIO(exported.text)))
     assert len(rows)==1
-    assert rows[0]['sku'].startswith("'=")
+    assert rows[0]['sku']=='SAFE-LEDGER-001'
     assert rows[0]['title'].startswith("'+")
     assert rows[0]['sold_usd']=='420.00'
     assert rows[0]['fees_usd']=='42.00'
