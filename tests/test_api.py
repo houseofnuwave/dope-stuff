@@ -97,6 +97,38 @@ def test_csv_and_formula_protection(seller,item_input):
     assert rows[1]['price']=='25.00'
 
 
+def test_sales_export_escapes_formula_like_inventory_fields(seller,item_input):
+    c=seller['client'];h=seller['csrf']
+    item=item_input.copy()
+    item.update(
+        sku='=HYPERLINK("https://example.invalid","sku")',
+        title='+cmd|/C calc',
+    )
+    created=c.post('/api/items',headers=h,json=item)
+    assert created.status_code==201, created.text
+    item_id=created.json()['id']
+
+    sale=c.post(
+        f'/api/items/{item_id}/sale',
+        headers=h,
+        json={'channel':'other','sold_cents':42000,'fee_cents':4200,'ship_cents':800},
+    )
+    assert sale.status_code==200
+    assert sale.json()['net_profit_cents']==25000
+
+    exported=c.get('/api/sales-export.csv')
+    assert exported.status_code==200
+    rows=list(csv.DictReader(io.StringIO(exported.text)))
+    assert len(rows)==1
+    assert rows[0]['sku'].startswith("'=")
+    assert rows[0]['title'].startswith("'+")
+    assert rows[0]['sold_usd']=='420.00'
+    assert rows[0]['fees_usd']=='42.00'
+    assert rows[0]['shipping_usd']=='8.00'
+    assert rows[0]['acquisition_usd']=='120.00'
+    assert rows[0]['net_profit_usd']=='250.00'
+
+
 def test_feedback_and_pricing_waitlist(seller):
     c=seller['client'];h=seller['csrf']
     assert c.post('/api/feedback',json={'rating':5,'message':'This is useful for my workflow.'},headers=h).status_code==200
