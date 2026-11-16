@@ -38,6 +38,25 @@ def test_abandoned_prepared_write_and_foreign_target_alert(client):
     assert result["counts"]["deletion_other_storage"] == 1
 
 
+def test_prepared_write_backlog_alerts_before_age_threshold(client):
+    key = photo_cleanup.target_key()
+    with db.connect() as connection:
+        for index in range(2):
+            connection.execute("""INSERT INTO photo_write_intents
+                (target_key,file_path,operation_id,phase,created_at,next_attempt_at)
+                VALUES (?,?,?,?,?,?)""",
+                (key, f"recent-{index}.webp", f"recent-operation-{index}", "staging", 1999, 9999))
+    values = ops_health.snapshot(now=2000)
+    assert values["write_prepared"] == 2
+    result = ops_health.evaluate(
+        values, max_prepared_writes=1, max_staging_age_seconds=3600
+    )
+    assert result["status"] == "alert"
+    assert "prepared_write_backlog" in result["reason_codes"]
+    assert "prepared_write_overdue" not in result["reason_codes"]
+    assert "recent-0.webp" not in str(result)
+
+
 def test_healthy_indefinite_watches_do_not_create_false_overdue_alert(client):
     with db.connect() as connection:
         connection.execute("""INSERT INTO photo_write_intents
