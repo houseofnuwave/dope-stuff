@@ -71,7 +71,8 @@ def snapshot(*, now=None):
 
 
 def evaluate(values, *, max_pending=100, max_delete_age_seconds=3600,
-             max_delete_failures=0, max_staging_age_seconds=1800, max_write_failures=0):
+             max_delete_failures=0, max_prepared_writes=100,
+             max_staging_age_seconds=1800, max_write_failures=0):
     reasons = []
     if values["deletion_pending"] > max_pending:
         reasons.append("deletion_backlog")
@@ -79,6 +80,8 @@ def evaluate(values, *, max_pending=100, max_delete_age_seconds=3600,
         reasons.append("deletion_overdue")
     if values["deletion_retry_failures"] > max_delete_failures:
         reasons.append("deletion_retry_failures")
+    if values["write_prepared"] > max_prepared_writes:
+        reasons.append("prepared_write_backlog")
     if values["write_prepared"] and values["write_prepared_oldest_seconds"] > max_staging_age_seconds:
         reasons.append("prepared_write_overdue")
     if values["write_recovery_failures"] > max_write_failures:
@@ -95,6 +98,7 @@ def main(argv=None):
     parser.add_argument("--max-pending", type=nonnegative, default=100)
     parser.add_argument("--max-delete-age-seconds", type=nonnegative, default=3600)
     parser.add_argument("--max-delete-failures", type=nonnegative, default=0)
+    parser.add_argument("--max-prepared-writes", type=nonnegative, default=100)
     parser.add_argument("--max-staging-age-seconds", type=nonnegative, default=1800)
     parser.add_argument("--max-write-failures", type=nonnegative, default=0)
     args = parser.parse_args(argv)
