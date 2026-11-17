@@ -1,4 +1,9 @@
 """Operational diagnostics must be redacted, non-mutating, and actionable."""
+from contextlib import contextmanager
+import sqlite3
+
+import pytest
+
 from app import db, photo_cleanup
 from tools import ops_health
 
@@ -55,6 +60,49 @@ def test_prepared_write_backlog_alerts_before_age_threshold(client):
     assert "prepared_write_backlog" in result["reason_codes"]
     assert "prepared_write_overdue" not in result["reason_codes"]
     assert "recent-0.webp" not in str(result)
+
+
+def test_snapshot_succeeds_when_database_writes_are_denied(client, monkeypatch):
+    key = photo_cleanup.target_key()
+    with db.connect() as connection:
+        connection.execute("""INSERT INTO photo_write_intents
+            (target_key,file_path,operation_id,phase,created_at,next_attempt_at)
+            VALUES (?,?,?,?,?,?)""",
+            (key, "read-only-probe.webp", "read-only-probe", "staging", 1999, 9999))
+
+    original_connect = db.connect
+    write_actions = {
+        sqlite3.SQLITE_INSERT, sqlite3.SQLITE_UPDATE, sqlite3.SQLITE_DELETE,
+        sqlite3.SQLITE_CREATE_INDEX, sqlite3.SQLITE_CREATE_TABLE,
+        sqlite3.SQLITE_CREATE_TRIGGER, sqlite3.SQLITE_CREATE_VIEW,
+        sqlite3.SQLITE_DROP_INDEX, sqlite3.SQLITE_DROP_TABLE,
+        sqlite3.SQLITE_DROP_TRIGGER, sqlite3.SQLITE_DROP_VIEW,
+        sqlite3.SQLITE_ALTER_TABLE, sqlite3.SQLITE_ATTACH, sqlite3.SQLITE_DETACH,
+        sqlite3.SQLITE_PRAGMA,
+    }
+
+    @contextmanager
+    def read_only_connect():
+        with original_connect() as connection:
+            connection.set_authorizer(
+                lambda action, *_: sqlite3.SQLITE_DENY
+                if action in write_actions else sqlite3.SQLITE_OK
+            )
+            yield connection
+
+    monkeypatch.setattr(db, "connect", read_only_connect)
+
+    values = ops_health.snapshot(now=2000)
+    assert values["write_prepared"] == 1
+
+    with pytest.raises(sqlite3.DatabaseError):
+        with db.connect() as connection:
+            connection.execute("DELETE FROM photo_write_intents")
+
+    with original_connect() as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM photo_write_intents"
+        ).fetchone()[0] == 1
 
 
 def test_healthy_indefinite_watches_do_not_create_false_overdue_alert(client):
