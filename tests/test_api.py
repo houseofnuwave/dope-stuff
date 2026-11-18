@@ -97,6 +97,39 @@ def test_csv_and_formula_protection(seller,item_input):
     assert rows[1]['price']=='25.00'
 
 
+def test_sales_export_escapes_formula_like_inventory_fields(seller,item_input):
+    c=seller['client'];h=seller['csrf']
+    unsafe_sku=item_input.copy()
+    unsafe_sku['sku']='=HYPERLINK("https://example.invalid","sku")'
+    assert c.post('/api/items',headers=h,json=unsafe_sku).status_code==422
+
+    item=item_input.copy()
+    item.update(sku='SAFE-LEDGER-001',title='+cmd|/C calc')
+    created=c.post('/api/items',headers=h,json=item)
+    assert created.status_code==201, created.text
+    item_id=created.json()['id']
+
+    sale=c.post(
+        f'/api/items/{item_id}/sale',
+        headers=h,
+        json={'channel':'other','sold_cents':42000,'fee_cents':4200,'ship_cents':800},
+    )
+    assert sale.status_code==200
+    assert sale.json()['net_profit_cents']==25000
+
+    exported=c.get('/api/sales-export.csv')
+    assert exported.status_code==200
+    rows=list(csv.DictReader(io.StringIO(exported.text)))
+    assert len(rows)==1
+    assert rows[0]['sku']=='SAFE-LEDGER-001'
+    assert rows[0]['title'].startswith("'+")
+    assert rows[0]['sold_usd']=='420.00'
+    assert rows[0]['fees_usd']=='42.00'
+    assert rows[0]['shipping_usd']=='8.00'
+    assert rows[0]['acquisition_usd']=='120.00'
+    assert rows[0]['net_profit_usd']=='250.00'
+
+
 def test_feedback_and_pricing_waitlist(seller):
     c=seller['client'];h=seller['csrf']
     assert c.post('/api/feedback',json={'rating':5,'message':'This is useful for my workflow.'},headers=h).status_code==200
@@ -104,3 +137,34 @@ def test_feedback_and_pricing_waitlist(seller):
     assert c.post('/api/pilot-request',json={'email':'customer@example.com'}).status_code==200
     assert c.post('/api/pilot-request',json={'email':'customer@example.com'}).status_code==200
     assert c.post('/api/pilot-request',json={'email':'not-an-email'}).status_code==422
+
+def test_sales_export_is_scoped_to_authenticated_seller(seller,item_input):
+    c=seller['client'];h=seller['csrf']
+    item=item_input.copy()
+    item.update(sku='SELLER-A-PRIVATE-001',title='Seller A private ledger record')
+    created=c.post('/api/items',headers=h,json=item)
+    assert created.status_code==201, created.text
+    sale=c.post(
+        f"/api/items/{created.json()['id']}/sale",
+        headers=h,
+        json={'channel':'other','sold_cents':42000,'fee_cents':4200,'ship_cents':800},
+    )
+    assert sale.status_code==200
+    owner_rows=list(csv.DictReader(io.StringIO(c.get('/api/sales-export.csv').text)))
+    assert len(owner_rows)==1
+    assert owner_rows[0]['sku']=='SELLER-A-PRIVATE-001'
+
+    logged_out=c.post('/api/auth/logout',headers=h)
+    assert logged_out.status_code==200
+    registered=c.post('/api/auth/register',json={
+        'name':'Second Demo Seller',
+        'email':'seller-two@example.com',
+        'password':'anotherLongPassword123',
+    })
+    assert registered.status_code==200, registered.text
+
+    other_export=c.get('/api/sales-export.csv')
+    assert other_export.status_code==200
+    other_rows=list(csv.DictReader(io.StringIO(other_export.text)))
+    assert other_rows==[]
+    assert 'SELLER-A-PRIVATE-001' not in other_export.text
