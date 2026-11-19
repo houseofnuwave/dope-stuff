@@ -20,7 +20,9 @@ import re
 import secrets
 import sqlite3
 import time
+from collections import OrderedDict
 from contextlib import asynccontextmanager, suppress
+from threading import Lock
 from pathlib import Path
 from urllib.parse import urlparse
 from starlette.middleware.trustedhost import TrustedHostMiddleware
@@ -55,7 +57,11 @@ CHANNELS = {
 ALLOWED_CONDITIONS = {"Unspecified","New with tags","New without tags","Like new","Good","Fair"}
 ALLOWED_STATUS = {"not_started","ready","manually_published","delist_required","delisted"}
 ph = PasswordHasher(time_cost=2, memory_cost=32768, parallelism=2)
-failed_attempts: dict[str, list[float]] = {}
+RATE_LIMIT_WINDOW_SECONDS = 900
+RATE_LIMIT_BUCKET_LIMIT = 4096
+RATE_LIMIT_PRUNE_BATCH = 64
+failed_attempts: OrderedDict[str, list[float]] = OrderedDict()
+failed_attempts_lock = Lock()
 logger = logging.getLogger("form.recovery")
 
 @asynccontextmanager
@@ -261,13 +267,26 @@ class PilotInput(BaseModel):
 
 
 def limiter(request: Request, purpose: str, max_requests: int=10):
-    # Best-effort pilot rate limit. Production: shared Redis keyed by validated client IP.
+    # Process-local pilot guard only; production still requires shared Redis throttling.
     key = f"{purpose}:{request.client.host if request.client else 'unknown'}"
-    now = time.monotonic()
-    recent = [x for x in failed_attempts.get(key,[]) if now-x < 900]
-    if len(recent) >= max_requests: raise HTTPException(429,"Too many attempts. Try again later.")
-    recent.append(now)
-    failed_attempts[key] = recent
+    with failed_attempts_lock:
+        now = time.monotonic()
+        cutoff = now - RATE_LIMIT_WINDOW_SECONDS
+        # Prune a bounded slice of least-recently-used buckets on each request.
+        for stale_key in list(failed_attempts)[:RATE_LIMIT_PRUNE_BATCH]:
+            attempts = failed_attempts[stale_key]
+            if not attempts or attempts[-1] <= cutoff:
+                failed_attempts.pop(stale_key, None)
+        recent = [x for x in failed_attempts.pop(key, []) if now - x < RATE_LIMIT_WINDOW_SECONDS]
+        if len(recent) >= max_requests:
+            failed_attempts[key] = recent
+            while len(failed_attempts) > RATE_LIMIT_BUCKET_LIMIT:
+                failed_attempts.popitem(last=False)
+            raise HTTPException(429, "Too many attempts. Try again later.")
+        recent.append(now)
+        failed_attempts[key] = recent
+        while len(failed_attempts) > RATE_LIMIT_BUCKET_LIMIT:
+            failed_attempts.popitem(last=False)
 
 
 def current_user(request: Request):
