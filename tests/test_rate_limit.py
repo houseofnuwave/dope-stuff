@@ -65,3 +65,23 @@ def test_limiter_serializes_concurrent_attempts_for_one_client():
     assert results.count("allowed") == 5
     assert results.count(429) == 19
     assert len(main.failed_attempts["login:198.51.100.42"]) == 5
+
+
+def test_limiter_keeps_purposes_isolated_and_expires_at_window_boundary(monkeypatch):
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(main, "time", SimpleNamespace(monotonic=lambda: clock["now"]))
+    request = request_for("192.0.2.55")
+
+    main.limiter(request, "login", max_requests=1)
+    with pytest.raises(HTTPException) as blocked:
+        main.limiter(request, "login", max_requests=1)
+    assert blocked.value.status_code == 429
+
+    # Registration has a separate budget even when the client IP matches.
+    main.limiter(request, "register", max_requests=1)
+    assert main.failed_attempts["register:192.0.2.55"] == [1000.0]
+
+    # A denied request must not extend the original login window.
+    clock["now"] = 1000.0 + main.RATE_LIMIT_WINDOW_SECONDS
+    main.limiter(request, "login", max_requests=1)
+    assert main.failed_attempts["login:192.0.2.55"] == [clock["now"]]
